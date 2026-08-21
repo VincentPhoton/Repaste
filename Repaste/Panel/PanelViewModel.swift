@@ -66,6 +66,14 @@ enum PanelDialog: Equatable {
     case quitConfirm
 }
 
+// MARK: - Toast 数据
+
+/// 面板顶部 toast：主标题 + 可选副标题（如条目预览摘要）
+struct Toast: Equatable {
+    let title: String
+    let subtitle: String?
+}
+
 // MARK: - 面板状态机
 
 /// 面板状态机（@Observable）：持有筛选状态与数据快照，输出过滤排序后的列表；
@@ -137,10 +145,12 @@ final class PanelViewModel {
     /// 模板行 ⋮ 按钮在面板坐标系中的锚点 frame
     var templateMenuAnchor: CGRect = .zero
 
-    /// 当前 toast 文案（nil = 无 toast；1.2s 自动消失）
-    private(set) var toastText: String?
+    /// 当前 toast（nil = 无 toast；1.2s 自动消失）
+    private(set) var toast: Toast?
     /// toast 自动消失任务（新 toast 到来时取消旧任务）
     private var toastDismissTask: Task<Void, Never>?
+    /// toast 展示后的延迟收面板任务（连续使用条目时重置计时；面板重新展示时取消）
+    private var deferredHideTask: Task<Void, Never>?
 
     // MARK: 数据快照
 
@@ -176,8 +186,9 @@ final class PanelViewModel {
         templateMenuClip = nil
         draggingTemplateId = nil
         browserChooserClip = nil
-        toastText = nil
+        toast = nil
         toastDismissTask?.cancel()
+        deferredHideTask?.cancel()
         resetSelection()
         searchFocusRequest += 1
     }
@@ -338,37 +349,36 @@ final class PanelViewModel {
     // MARK: 动作
 
     /// 使用条目（点击行 / ⏎ / 模板点击共用）：按 pasteTarget 走「写剪贴板」或「直接粘贴到目标 App」
-    /// - clipboard（默认，零权限）：写回剪贴板 → 收起面板（静默，用户去目标 App ⌘V）
+    /// - clipboard（默认，零权限）：写回剪贴板 → toast「已写入剪贴板」→ toast 展示完收起面板（用户去目标 App ⌘V）
     /// - app：需辅助功能授权；未授权自动回落 clipboard + toast；已授权写剪贴板 → 收面板 → 80ms 后向目标 App 发 ⌘V
     func use(clip: Clip) {
         let pasteTarget = settings.pasteTarget
         let eventName = clip.isTemplate ? EventLog.templateUsed : EventLog.itemUsed
         EventLog.track(eventName, ["kind": clip.kind, "paste_target": pasteTarget])
 
-        // 默认流：静默写剪贴板 + 收起面板（无 toast——用户去目标 App ⌘V）
+        // 默认流：写剪贴板 → toast「已写入剪贴板」→ toast 展示完收面板（toast 绘制在面板内，需保持面板可见）
         guard pasteTarget == "app" else {
             PasteboardWriter.write(clip: clip)
-            PanelController.shared.hide()
+            hideAfterToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
             return
         }
 
-        // app 流未授权辅助功能：自动回落 clipboard 模式（写剪贴板 + 收面板 + toast + 事件）
+        // app 流未授权辅助功能：自动回落 clipboard 模式（写剪贴板 + toast + 延迟收面板 + 事件）
         guard AutoPaster.isAuthorized() else {
             settings.pasteTarget = "clipboard"
             settings.accessibilityGranted = false
             EventLog.track(EventLog.autoPasteDenied, ["kind": clip.kind, "reason": "unauthorized"])
             PasteboardWriter.write(clip: clip)
-            PanelController.shared.hide()
-            showToast("未授权，已复制到剪贴板")
+            hideAfterToast("未授权，已写入剪贴板", subtitle: toastSubtitle(for: clip))
             return
         }
         settings.accessibilityGranted = true
 
-        // 前台无有效粘贴目标（frontmost 为空或本 App）：降级 toast「已复制，按 ⌘V 粘贴」，面板保持打开
+        // 前台无有效粘贴目标（frontmost 为空或本 App）：降级 toast「已写入剪贴板，按 ⌘V 粘贴」，面板保持打开
         guard AutoPaster.hasValidPasteTarget() else {
             EventLog.track(EventLog.autoPasteDenied, ["kind": clip.kind, "reason": "no_target"])
             PasteboardWriter.write(clip: clip)
-            showToast("已复制，按 ⌘V 粘贴")
+            showToast("已写入剪贴板", subtitle: "按 ⌘V 粘贴")
             return
         }
 
@@ -387,7 +397,7 @@ final class PanelViewModel {
 
     // MARK: 链接跳转
 
-    /// 打开条目链接（行内「跳转」/「打开链接」按钮；kind: menu / inline / hotkey）：
+    /// 打开条目链接（行内「打开链接」按钮；kind: menu / inline / hotkey）：
     /// 链接类打开整串 URL；文本类打开首个 http(s) 链接；其他类型忽略。面板不收起（可连续开多个）
     func openLink(clip: Clip, kind: String) {
         guard let url = Self.openableURL(in: clip) else { return }
@@ -445,14 +455,14 @@ final class PanelViewModel {
     /// http(s) URL 简单匹配正则（编译一次复用）
     private static let urlRegex = try! NSRegularExpression(pattern: "https?://[^\\s]+")
 
-    // MARK: 浏览器选择浮层（⌥ 点「跳转」）
+    // MARK: 浏览器选择浮层（⌥ 点「打开链接」）
 
     /// 浏览器选择浮层目标条目（nil = 浮层关闭）
     var browserChooserClip: Clip?
-    /// 浏览器选择浮层锚点（跳转按钮在面板坐标系中的 frame）
+    /// 浏览器选择浮层锚点（「打开链接」按钮在面板坐标系中的 frame）
     var browserChooserAnchor: CGRect = .zero
 
-    /// 打开浏览器选择浮层（⌥ 点「跳转」触发；记录目标条目与按钮锚点 frame）
+    /// 打开浏览器选择浮层（⌥ 点「打开链接」触发；记录目标条目与按钮锚点 frame）
     func openBrowserChooser(clip: Clip, anchor: CGRect) {
         browserChooserClip = clip
         browserChooserAnchor = anchor
@@ -495,7 +505,7 @@ final class PanelViewModel {
         pasteboard.setString(text, forType: .string)
         ClipboardMonitor.shared.markExternalWrite()
         EventLog.track(EventLog.plainCopyUsed, ["kind": clip.kind])
-        showToast("已无格式复制")
+        showToast("已无格式写入", subtitle: toastSubtitle(for: clip))
     }
 
     /// 请求存入模板组（菜单「存入模板组…」/ ⌘G 等价入口）：打开弹窗，
@@ -579,7 +589,8 @@ final class PanelViewModel {
         groupNameInput = ""
         activeDialog = nil
         reload()
-        showToast("已存入模板组")
+        let groupName = groups.first { $0.id == groupId }?.name ?? ""
+        showToast("已存入模板组", subtitle: groupName)
     }
 
     /// 打开「重命名模板组」弹窗（预填旧名）
@@ -647,7 +658,7 @@ final class PanelViewModel {
         pasteboard.setString(text, forType: .string)
         ClipboardMonitor.shared.markExternalWrite()
         EventLog.track(EventLog.plainCopyUsed, ["kind": clip.kind])
-        showToast("已复制")
+        showToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
     }
 
     /// 删除模板条目（只删该条模板，不动历史）
@@ -732,7 +743,7 @@ final class PanelViewModel {
         }
         ClipboardMonitor.shared.markExternalWrite()
         EventLog.track(EventLog.plainCopyUsed, ["kind": clip.kind])
-        showToast("已复制图片")
+        showToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
     }
 
     /// 切换来源筛选（再点一次取消；供来源条与行内来源标签）
@@ -745,15 +756,39 @@ final class PanelViewModel {
 
     // MARK: toast
 
-    /// 显示 toast 轻提示（面板顶部小黑条，1.2s 自动消失；新提示覆盖旧提示）
-    func showToast(_ text: String) {
-        toastText = text
+    /// 显示 toast 轻提示（面板顶部，1.3s 自动消失；新提示覆盖旧提示）
+    func showToast(_ title: String, subtitle: String? = nil) {
+        toast = Toast(title: title, subtitle: subtitle)
         toastDismissTask?.cancel()
-        toastDismissTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.2))
+        // 必须 @MainActor：本类未隔离，裸 Task 会跑在后台线程，
+        // 后台线程修改 SwiftUI 观察的状态会破坏视图/手势系统（表现为按钮突然全部无响应）
+        toastDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.3))
             guard !Task.isCancelled else { return }
-            self?.toastText = nil
+            self?.toast = nil
         }
+    }
+
+    /// 显示 toast 并在展示结束后（1.3s）收起面板（toast 绘制在面板内，需保持面板可见；
+    /// 连续使用条目时重置计时；面板被重新呼出时经 prepareForDisplay 取消）
+    private func hideAfterToast(_ title: String, subtitle: String? = nil) {
+        showToast(title, subtitle: subtitle)
+        deferredHideTask?.cancel()
+        deferredHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.3))
+            guard !Task.isCancelled else { return }
+            PanelController.shared.hide()
+        }
+    }
+
+    /// 生成 toast 副标题：条目预览截断，最长 40 字符
+    private func toastSubtitle(for clip: Clip) -> String {
+        let text = clip.preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxLength = 40
+        if text.count > maxLength {
+            return String(text.prefix(maxLength)) + "…"
+        }
+        return text.isEmpty ? clip.kindEnum.kindLabel : text
     }
 
     // MARK: 键盘导航

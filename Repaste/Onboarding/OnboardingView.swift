@@ -3,7 +3,7 @@
 //  Repaste
 //
 //  首次启动引导（三步）：欢迎与默认 Tab → 隐私与本地存储 → 试试看（刘海呼出验证）
-//  独立标准窗口 + 自绘引导卡（guideCardRadius 24、DT.panel 底、1px strokeStrong 描边）；
+//  独立无边框窗口（无系统标题栏 / 边框 / 控制按钮）+ 自绘引导卡（guideCardRadius 24、DT.panel 底、1px strokeStrong 描边）；
 //  全程不索要任何系统权限；完成 / 跳过均写 onboardingCompleted（重启不再出现）
 //
 
@@ -12,7 +12,7 @@ import AppKit
 
 // MARK: - 首启触发器
 
-/// 首启触发器：MenuBarExtra 内容会随状态变化（如录制开关）重建，需会话内幂等
+/// 首启触发器：由 AppDelegate 在启动完成时调用（会话内幂等，防多处触发）
 @MainActor
 enum OnboardingLauncher {
     /// 本 App 进程内是否已触发过
@@ -45,9 +45,6 @@ struct OnboardingView: View {
     /// 面板可见性轮询任务（NSPanel.isVisible 非 @Observable，需主动轮询）
     @State private var pollTask: Task<Void, Never>?
 
-    /// 关闭引导窗口（完成 / 跳过后）
-    @Environment(\.dismiss) private var dismiss
-
     /// 设置中心（第 1 步默认 Tab 单选，点选即写 defaultTab）
     private let settings = SettingsStore.shared
 
@@ -61,10 +58,10 @@ struct OnboardingView: View {
     }
 
     var body: some View {
+        // 无边框透明窗口：不留整窗底色，仅引导卡本身可见（14px 透明边距留给阴影）
         guideCard
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(DT.surface2)
             .preferredColorScheme(.dark)
             // esc = 跳过当前步（隐藏按钮承载 cancelAction 快捷键）
             .background(
@@ -142,7 +139,7 @@ struct OnboardingView: View {
                 .foregroundStyle(DT.fgStrong)
             VStack(alignment: .leading, spacing: 7) {
                 // 「0.1 秒」用 markdown 粗体强调
-                Text("把鼠标滑到 MacBook 刘海，停留 **0.1 秒** 就能呼出剪贴板历史。")
+                Text("把鼠标滑到 **你 MacBook 屏幕顶部**的刘海（摄像头所在的黑色区域），停留 **0.1 秒** 就能呼出剪贴板历史。")
                     .font(.system(size: 12.5))
                     .foregroundStyle(DT.muted)
                 HStack(spacing: 5) {
@@ -236,10 +233,10 @@ struct OnboardingView: View {
     /// 第 3 步：刘海呼出验证（刘海图形 + 向上脉冲 + 状态行）
     private var tryStep: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("来，滑一次刘海")
+            Text("来，呼出一次试试")
                 .font(.system(size: 21, weight: .bold))
                 .foregroundStyle(DT.fgStrong)
-            Text("把鼠标滑到屏幕顶部的刘海 ↓")
+            Text("把鼠标移到 **你当前电脑屏幕顶部中央**的刘海（摄像头所在的黑色区域），停留即可。注意：是屏幕上的真实刘海，不是下方示意图。")
                 .font(.system(size: 12.5))
                 .foregroundStyle(DT.muted)
                 .padding(.top, 8)
@@ -247,6 +244,10 @@ struct OnboardingView: View {
             VStack(spacing: 12) {
                 NotchPulse()
                 notchShape
+                // 示意图标注：明确此处只是演示，操作对象是真实屏幕上的刘海
+                Text("↑ 示意图：真实刘海在你屏幕顶部中央")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DT.muted2)
                 statusLine
             }
             .frame(maxWidth: .infinity)
@@ -344,7 +345,7 @@ struct OnboardingView: View {
         } else {
             EventLog.track(EventLog.onboardingCompleted)
         }
-        dismiss()
+        AppWindowBridge.shared.closeOnboarding()
     }
 
     // MARK: 面板呼出监听

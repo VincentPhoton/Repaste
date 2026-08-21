@@ -96,4 +96,6 @@ extension EventLog {
     static let clipDeleted = "clip_deleted"
     /// 图片放大查看（字段 kind）
     static let imageViewed = "image_viewed"
+    /// 面板点击穿透失联被看门狗自愈（字段 alpha：触发时面板透明度）
+    static let panelClickThroughHealed = "panel_click_through_healed"
 }

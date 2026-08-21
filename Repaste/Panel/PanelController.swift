@@ -18,6 +18,30 @@ enum PanelMode {
     case centered
 }
 
+// MARK: - 面板进出动效参数
+
+/// 面板进出动效参数
+/// 入场 ease-out（先快后缓、柔和落位）；退场 ease-in（加速离场），时长约为入场 3/4
+private enum PanelMotion {
+    /// 入场时长（notch 刘海垂落 / centered 自下方升起）
+    static let arriveDuration: TimeInterval = 0.18
+    /// 退场时长（离场快于入场）
+    static let departDuration: TimeInterval = 0.14
+    /// 收起动画中途重新展示的恢复时长
+    static let recoverDuration: TimeInterval = 0.18
+    /// 减弱动态效果（Reduce Motion）时的纯淡入 / 淡出时长
+    static let fadeInDuration: TimeInterval = 0.18
+    static let fadeOutDuration: TimeInterval = 0.14
+    /// notch 模式滑入 / 滑出时与屏幕顶的间距（完全藏到刘海后方）
+    static let notchGap: CGFloat = 10
+    /// centered 模式入场升起 / 退场下沉的位移
+    static let centeredOffset: CGFloat = 12
+    /// 入场曲线：expo ease-out
+    static let arriveTiming = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+    /// 退场曲线：ease-in
+    static let departTiming = CAMediaTimingFunction(controlPoints: 0.7, 0, 0.84, 0)
+}
+
 // MARK: - 面板窗口
 
 /// 面板 NSPanel 子类：borderless 面板默认不能成为 key window，
@@ -50,9 +74,23 @@ final class PanelController {
     /// 当前所在屏（多屏下面板在触发热区 / 胶囊的屏展示；内容高度重算时沿用）
     private weak var currentScreen: NSScreen?
 
+    /// 面板展示代次（每次 show 递增；hide 完成回调校验代次，
+    /// 防止渐隐期间被重新展示的面板被旧回调误 orderOut）
+    private var showGeneration = 0
+
+    /// Workspace 通知 token（Space 切换 / 显示器唤醒时重同步面板）
+    private var workspaceTokens: [any NSObjectProtocol] = []
+    /// NotificationCenter 通知 token（屏幕布局变化时重同步面板）
+    private var appTokens: [any NSObjectProtocol] = []
+
+    /// 点击穿透看门狗：全局 mouseDown 监听 token
+    private var clickThroughToken: Any?
+    /// 上次自愈时刻（节流：0.5s 内只重建一次，防连点重复重建）
+    private var lastHealAt = Date.distantPast
+
     private init() {
         let panel = RepastePanel(
-            contentRect: NSRect(x: 0, y: 0, width: DT.panelWidth, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: DT.panelWidth, height: 290),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -75,17 +113,26 @@ final class PanelController {
         viewModel.reload()
         // 观察内容规模变化，动态调整面板高度
         observeContentForSizing()
+        // Space 切换 / 显示器唤醒后重同步面板
+        observeWorkspaceForResync()
+        // 点击穿透自愈看门狗（检测「可见但点击穿透」失联态并当场重建）
+        installClickThroughWatchdog()
     }
 
     // MARK: 展示 / 隐藏
 
-    /// 展示面板（渐显动画，不激活 App）
+    /// 展示面板（入场过渡动画，不激活 App）
+    /// notch 模式：面板从屏幕顶上方（刘海后方）滑落展开 + 淡入；
+    /// centered 模式：自最终位置下方 12pt 升起 + 淡入；
+    /// 系统开启「减弱动态效果」时退化为纯淡入（不位移）
     /// - Parameters:
     ///   - mode: 展示模式（刘海 / 居中）
     ///   - screen: 目标屏（nil = NSScreen.main；刘海热区 / 胶囊触发展开时传所在屏）
     ///   - trigger: 埋点触发来源（nil 时按 mode 推断：notch → "notch"、centered → "hotkey"）
     func show(mode: PanelMode, on screen: NSScreen? = nil, trigger: String? = nil) {
         guard let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        // 展示代次递增：使渐隐期间挂起的旧 hide 完成回调失效（防止刚展示的面板被误移出）
+        showGeneration += 1
         currentMode = mode
         currentScreen = screen
         viewModel.isNotchMode = (mode == .notch)
@@ -96,51 +143,126 @@ final class PanelController {
         viewModel.prepareForDisplay()
         EventLog.track(EventLog.panelOpen, ["trigger": trigger ?? (mode == .notch ? "notch" : "hotkey")])
 
-        applyPanelFrame(screen: screen)
+        let finalFrame = computePanelFrame(screen: screen)
 
-        // 渐显动画（150ms 内 alpha 0 → 1）；orderFrontRegardless 不激活 App
+        // 收起动画尚未结束又重新展示：从当前位置 / 当前透明度平滑恢复到目标位，避免跳变
+        if panel.isVisible && panel.alphaValue > 0.05 {
+            // 先完整摘除再挂回（forceRemount）：canJoinAllSpaces+stationary 面板可能进入
+            // 「可见但点击穿透」的失联态（WindowServer 仍合成绘制，事件命中区域却未挂载），
+            // 单纯 orderFrontRegardless 只调层级、不重建事件挂载，必须 orderOut + orderFront
+            // 强制重建；同 runloop 内无可见闪烁
+            forceRemount()
+            let generation = showGeneration
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = PanelMotion.recoverDuration
+                context.timingFunction = PanelMotion.arriveTiming
+                panel.animator().alphaValue = 1
+                panel.animator().setFrame(finalFrame, display: true)
+            }, completionHandler: { [weak self] in
+                // 恢复动画被后续动画打断时 alpha 的 model value 可能冻结在中途值，
+                // 仍是当前代次时强制终态，避免半透明残影影响后续路径判断
+                guard let self, generation == self.showGeneration, self.panel.isVisible else { return }
+                self.panel.alphaValue = 1
+            })
+            return
+        }
+
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        // 入场起始 frame：notch 移到屏幕顶上方（完全藏于刘海后方）；centered 下移 12pt
+        var startFrame = finalFrame
+        if !reduceMotion {
+            switch mode {
+            case .notch:
+                startFrame.origin.y = screen.frame.maxY + PanelMotion.notchGap
+            case .centered:
+                startFrame.origin.y -= PanelMotion.centeredOffset
+            }
+        }
+
+        // 幽灵态防御：面板本应不可见却仍挂载（alpha 残留在低值的罕见态），先彻底移出保证干净入场
+        if panel.isVisible { panel.orderOut(nil) }
+        panel.setFrame(startFrame, display: false)
         panel.alphaValue = 0
+        // orderFrontRegardless 不激活 App；成为 key window（nonactivating 不激活 App）确保键盘事件到达
         panel.orderFrontRegardless()
-        // 成为 key window（nonactivating 不激活 App），确保键盘事件到达
         panel.makeKey()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = reduceMotion ? PanelMotion.fadeInDuration : PanelMotion.arriveDuration
+            context.timingFunction = PanelMotion.arriveTiming
             panel.animator().alphaValue = 1
+            if !reduceMotion {
+                panel.animator().setFrame(finalFrame, display: true)
+            }
         }
     }
 
-    /// 隐藏面板（渐隐动画后移出）
+    /// 隐藏面板（退场过渡动画后移出）
+    /// notch 模式：上滑缩回屏幕顶上方（刘海后方）+ 淡出；centered 模式：下沉 12pt + 淡出；
+    /// 系统开启「减弱动态效果」时退化为纯淡出（不位移）
     func hide() {
         // 持久化来源筛选（rememberAppFilter 开启时保存 lastSourceFilter）
         viewModel.persistOnHide()
         let panel = self.panel
         guard panel.isVisible else { return }
+
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        // 退场目标 frame：notch 上滑至屏幕顶上方（完全藏于刘海后方）；centered 下沉 12pt
+        let endFrame: NSRect
+        if reduceMotion {
+            endFrame = panel.frame
+        } else {
+            switch currentMode {
+            case .notch:
+                let top = (currentScreen ?? NSScreen.main ?? NSScreen.screens.first)?
+                    .frame.maxY ?? panel.frame.maxY
+                endFrame = CGRect(
+                    x: panel.frame.minX,
+                    y: top + PanelMotion.notchGap,
+                    width: panel.frame.width,
+                    height: panel.frame.height
+                )
+            case .centered:
+                endFrame = panel.frame.offsetBy(dx: 0, dy: -PanelMotion.centeredOffset)
+            }
+        }
+
+        // 记录当前代次：完成回调时校验，渐隐期间若发生重新展示（代次已变）则不移出
+        let generation = showGeneration
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.15
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = reduceMotion ? PanelMotion.fadeOutDuration : PanelMotion.departDuration
+            context.timingFunction = PanelMotion.departTiming
             panel.animator().alphaValue = 0
-        }, completionHandler: {
+            panel.animator().setFrame(endFrame, display: true)
+        }, completionHandler: { [weak self] in
+            guard let self, generation == self.showGeneration else { return }
             // 若动画期间面板被重新展示（alpha 回升），则不移出
-            if panel.alphaValue < 0.05 {
-                panel.orderOut(nil)
+            if self.panel.alphaValue < 0.05 {
+                self.panel.orderOut(nil)
+            } else if self.panel.isVisible {
+                // 防御：渐隐动画被同名动画叠加后 alpha 的 model value 可能冻结在中间值
+                // （deferredHideTask 与离开收起检测并发触发两次 hide 时），
+                // 无新展示代次时面板必须彻底移出——半透明残影挂在屏上会让后续
+                // show() 误走「恢复路径」跳过事件挂载重建，形成可见但不可点击的死态
+                self.panel.alphaValue = 0
+                self.panel.orderOut(nil)
             }
         })
     }
 
     // MARK: 尺寸与位置
 
-    /// 面板高度上限：内容自适应，最大约 560，且不超屏幕可用高度 - 120
+    /// 面板高度上限：内容自适应，最大约 400，且不超屏幕可用高度 - 120
     private func maxHeight(for screen: NSScreen) -> CGFloat {
-        max(240, min(560, screen.visibleFrame.height - 120))
+        max(220, min(400, screen.visibleFrame.height - 120))
     }
 
-    /// 按内容自适应高度重算并应用面板 frame
-    /// - Parameter animated: 内容变化期间是否带动画过渡（notch 顶边锚定、centered 中心锚定）
-    private func applyPanelFrame(screen: NSScreen, animated: Bool = false) {
-        // fittingSize 由 SwiftUI 内容理想尺寸得出（宽度固定 620，列表区受 maxHeight 约束）
+    /// 计算面板目标 frame（宽度固定 500，高度内容自适应；notch 顶部居中贴合屏幕顶 / centered 屏幕居中）
+    private func computePanelFrame(screen: NSScreen) -> NSRect {
+        // fittingSize 由 SwiftUI 内容理想尺寸得出（宽度固定 500，列表区受 maxHeight 约束）
         let fitting = hostingView.fittingSize
-        let height = min(max(fitting.height, 200), maxHeight(for: screen))
+        let height = min(max(fitting.height, 180), maxHeight(for: screen))
         let size = CGSize(width: DT.panelWidth, height: height)
 
         // 计算放置原点（AppKit 坐标系：原点在左下角）
@@ -160,7 +282,13 @@ final class PanelController {
             )
         }
 
-        let newFrame = NSRect(origin: origin, size: size)
+        return NSRect(origin: origin, size: size)
+    }
+
+    /// 按内容自适应高度重算并应用面板 frame
+    /// - Parameter animated: 内容变化期间是否带动画过渡（notch 顶边锚定、centered 中心锚定）
+    private func applyPanelFrame(screen: NSScreen, animated: Bool = false) {
+        let newFrame = computePanelFrame(screen: screen)
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.15
@@ -211,6 +339,106 @@ final class PanelController {
                 // onChange 触发后观察即失效，重新注册
                 self.observeContentForSizing()
             }
+        }
+    }
+
+    // MARK: Workspace 重同步
+
+    /// 观察 Workspace / App 通知：面板为 canJoinAllSpaces+stationary 的 borderless NSPanel，
+    /// 在 Space 切换、显示器唤醒、屏幕布局变化后可能与 WindowServer 失联
+    /// （面板仍显示但不参与事件命中测试——点击穿透、按钮全部无响应），此时需完整重建窗口挂载。
+    /// 注意：App 前后台切换（didBecome/ResignActive）不做重同步——每次激活切换都
+    /// orderOut+orderFront 反而增加挂载重建次数，失联由点击穿透看门狗兜底自愈
+    private func observeWorkspaceForResync() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        let appCenter = NotificationCenter.default
+
+        workspaceTokens.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resyncPanelIfNeeded()
+        })
+        workspaceTokens.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resyncPanelIfNeeded()
+        })
+        // 显示器级别唤醒（比 didWake 更精确：仅屏幕唤醒，系统未睡眠）
+        workspaceTokens.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resyncPanelIfNeeded()
+        })
+        // 屏幕布局变化（插拔显示器 / 分辨率调整）后窗口挂载可能失效
+        appTokens.append(appCenter.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resyncPanelIfNeeded()
+        })
+    }
+
+    /// 面板可见时完整重建窗口挂载（不可见时不动作）。
+    /// orderOut + orderFrontRegardless 强制 WindowServer 重新挂载事件命中区域——
+    /// 单纯 orderFrontRegardless 只调整层级，无法修复「可见但点击穿透」的失联态
+    private func resyncPanelIfNeeded() {
+        guard panel.isVisible else { return }
+        forceRemount()
+    }
+
+    /// 强制重建窗口挂载：orderOut + orderFrontRegardless 同一 runloop 内完成
+    /// （无可见闪烁），迫使 WindowServer 重建事件命中区域
+    private func forceRemount() {
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+        panel.makeKey()
+    }
+
+    // MARK: 点击穿透自愈看门狗
+
+    /// 安装点击穿透看门狗。
+    /// 原理：NSEvent 全局监听器只回调「投递给其他 App」的事件（本 App 收到的事件不会进
+    /// 全局监听）。若面板可见（alpha > 0.5）且某次鼠标按下落在面板 frame 内（排除屏幕顶部
+    /// 菜单栏/刘海带——该区域点击本就穿透给菜单栏），该事件本应命中我们的面板却进了别的
+    /// App，说明面板处于「可见但点击穿透」的 WindowServer 失联态——立即强制重建挂载，
+    /// 用户下一击即恢复。最坏只损失一次点击，而不是面板永久无响应。
+    private func installClickThroughWatchdog() {
+        guard clickThroughToken == nil else { return }
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        clickThroughToken = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.healIfClickThrough(event)
+        }
+    }
+
+    /// 判定点击是否穿透了可见面板，是则强制重建（节流 0.5s）
+    private func healIfClickThrough(_ event: NSEvent) {
+        let panel = self.panel
+        guard panel.isVisible, panel.alphaValue > 0.5 else { return }
+        let location = NSEvent.mouseLocation
+        guard panel.frame.contains(location) else { return }
+        // 排除屏幕顶部菜单栏 / 刘海带（notch 模式面板 frame 覆盖该区域，但该区域
+        // 无内容、点击本就穿透给菜单栏——面板健康时也如此，不能误判为失联）
+        if let screen = panel.screen ?? NSScreen.screens.first(where: { $0.frame.contains(location) }) {
+            let menuBandHeight = screen.frame.maxY - screen.visibleFrame.maxY + 12
+            if location.y > screen.frame.maxY - menuBandHeight { return }
+        }
+        // 节流：首个失联点击触发重建，后续连点已恢复、不再重复重建
+        let now = Date()
+        guard now.timeIntervalSince(lastHealAt) > 0.5 else { return }
+        lastHealAt = now
+        EventLog.track(EventLog.panelClickThroughHealed, [
+            "alpha": String(format: "%.2f", panel.alphaValue),
+        ])
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            self.forceRemount()
         }
     }
 }

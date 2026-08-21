@@ -46,9 +46,9 @@ struct ClipRow: View {
     let onUse: () -> Void
     /// 点击行内来源标签（key = bundleId 或 "unknown"，等同来源条筛选）
     let onSourceTap: (String) -> Void
-    /// 打开链接（链接卡「跳转」按钮普通点击 / 文本卡「打开链接」次级按钮；默认浏览器打开）
+    /// 打开链接（链接 / 文本卡统一的「打开链接」按钮普通点击；默认浏览器打开）
     let onOpenLink: () -> Void
-    /// 按住 ⌥ 点「跳转」：弹出浏览器选择浮层（参数 = 跳转按钮在面板坐标系中的锚点 frame）
+    /// 按住 ⌥ 点「打开链接」：弹出浏览器选择浮层（参数 = 按钮在面板坐标系中的锚点 frame）
     let onChooseBrowser: (CGRect) -> Void
     /// ⋮ 菜单（参数 = ⋮ 按钮在面板坐标系中的锚点 frame，供菜单弹出定位）
     let onMore: (CGRect) -> Void
@@ -65,8 +65,8 @@ struct ClipRow: View {
     @State private var thumbnail: NSImage?
     /// ⋮ 按钮在面板坐标系中的锚点 frame（滚动时随布局更新）
     @State private var moreButtonFrame: CGRect = .zero
-    /// 跳转按钮在面板坐标系中的锚点 frame（⌥ 点击弹浏览器选择浮层定位用）
-    @State private var jumpButtonFrame: CGRect = .zero
+    /// 「打开链接」按钮在面板坐标系中的锚点 frame（⌥ 点击弹浏览器选择浮层定位用）
+    @State private var linkButtonFrame: CGRect = .zero
 
     /// 千分位格式化器（>1000 字时使用）
     private static let decimalFormatter: NumberFormatter = {
@@ -102,14 +102,9 @@ struct ClipRow: View {
             contentView
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 右侧操作区（链接卡的「跳转」主按钮 + ⋮ 按钮）
-            HStack(spacing: 8) {
-                if clip.kindEnum == .link {
-                    jumpButton
-                }
-                moreButton
-            }
-            .padding(.top, 2)
+            // 右侧操作区（⋮ 按钮；链接打开已统一为元信息行内「打开链接」按钮）
+            moreButton
+                .padding(.top, 2)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -158,17 +153,8 @@ struct ClipRow: View {
                         .foregroundStyle(DT.fgStrong)
                         .lineLimit(1)
                 }
-                HStack(spacing: 7) {
-                    Text(pathText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    dot
-                    sourceLabel
-                    dot
-                    Text(RelativeTime.string(from: clip.createdAt))
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(DT.muted)
+                // 元信息行末尾统一「打开链接」按钮（与文本卡同位置同样式）
+                metaRow(extras: [], showsOpenLink: containsOpenableLink)
             }
         case .text, .file:
             // 文本卡：preview 两行截断 fg 色 + 元信息（来源 + 时间 + 字数 + 富文本标记 + 可选「打开链接」）
@@ -177,7 +163,7 @@ struct ClipRow: View {
                     .font(.system(size: 13))
                     .foregroundStyle(DT.fg)
                     .lineLimit(2)
-                metaRow(extras: textExtras, showsOpenLink: textContainsLink)
+                metaRow(extras: textExtras, showsOpenLink: containsOpenableLink)
             }
         }
     }
@@ -185,7 +171,7 @@ struct ClipRow: View {
     // MARK: 元信息行（统一 muted 12pt）
 
     /// 元信息行：来源（可点，等同来源条筛选）+ 相对时间 + 附加段（字数 / 富文本 / 图片尺寸）
-    /// + 可选「打开链接」次级按钮（文本卡 payloadText 检出首个 http(s) URL 时）
+    /// + 可选「打开链接」按钮（条目含 http(s) 链接时统一展示在行末）
     private func metaRow(extras: [String], showsOpenLink: Bool = false) -> some View {
         HStack(spacing: 7) {
             sourceLabel
@@ -204,25 +190,37 @@ struct ClipRow: View {
         .foregroundStyle(DT.muted)
     }
 
-    /// 文本卡是否含可打开的 http(s) 链接（正则检出首个 URL 即出「打开链接」按钮）
-    private var textContainsLink: Bool {
-        guard clip.kindEnum == .text, let text = clip.payloadText else { return false }
-        return PanelViewModel.firstURL(in: text) != nil
+    /// 条目是否含可打开的 http(s) 链接（链接卡取整串、文本卡取首个链接；检出即出「打开链接」按钮）
+    private var containsOpenableLink: Bool {
+        PanelViewModel.openableURL(in: clip) != nil
     }
 
-    /// 「打开链接」次级小按钮（muted 色，hover 提亮 accent；调 onOpenLink 走默认浏览器）
+    /// 「打开链接 ↗」行内按钮（accent 紫色，hover 提亮 accentBright）：
+    /// 普通点击 = 默认浏览器打开链接；按住 ⌥ 点击 = 弹浏览器选择浮层
+    /// （onTapGesture 捕获点击时刻的 NSEvent.modifierFlags，系统 Button 不暴露修饰键）
     private var openLinkButton: some View {
-        Button(action: onOpenLink) {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 9, weight: .semibold))
-                Text("打开链接")
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(isLinkHovering ? DT.accentBright : DT.muted)
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 9, weight: .semibold))
+            Text("打开链接")
         }
-        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(isLinkHovering ? DT.accentBright : DT.accent)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.option) {
+                onChooseBrowser(linkButtonFrame)
+            } else {
+                onOpenLink()
+            }
+        }
         .onHover { isLinkHovering = $0 }
+        // 持续跟踪按钮在面板坐标系中的 frame（列表滚动时同步更新，供浏览器浮层弹出定位）
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(PanelView.coordinateSpaceName))
+        } action: { frame in
+            linkButtonFrame = frame
+        }
     }
 
     /// 行内来源标签（可点切筛选；未知来源用中性问号图标）
@@ -296,49 +294,18 @@ struct ClipRow: View {
         return path
     }
 
-    /// 「跳转 ↗」主按钮（accentBtn 底白字小胶囊）：
-    /// 普通点击 = 默认浏览器打开链接；按住 ⌥ 点击 = 弹浏览器选择浮层
-    /// （onTapGesture 捕获点击时刻的 NSEvent.modifierFlags，系统 Button 不暴露修饰键）
-    private var jumpButton: some View {
-        HStack(spacing: 4) {
-            Text("跳转")
-            Image(systemName: "arrow.up.right")
-                .font(.system(size: 9, weight: .semibold))
-        }
-        .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(DT.accentBtn))
-        .contentShape(Capsule())
-        .onTapGesture {
-            if NSEvent.modifierFlags.contains(.option) {
-                onChooseBrowser(jumpButtonFrame)
-            } else {
-                onOpenLink()
-            }
-        }
-        // 持续跟踪按钮在面板坐标系中的 frame（列表滚动时同步更新，供浏览器浮层弹出定位）
-        .onGeometryChange(for: CGRect.self) { proxy in
-            proxy.frame(in: .named(PanelView.coordinateSpaceName))
-        } action: { frame in
-            jumpButtonFrame = frame
-        }
-    }
-
     // MARK: 右侧操作按钮
 
-    /// ⋮ 按钮（28×28、button 底；点击弹出更多菜单，携带按钮锚点 frame）
+    /// ⋮ 按钮（SF Symbol ellipsis 旋转 90°，与头部图标按钮同规格：13pt · DT.fg · 28×28 button 底；点击弹出更多菜单，携带按钮锚点 frame）
     private var moreButton: some View {
         Button {
             onMore(moreButtonFrame)
         } label: {
-            VStack(spacing: 3.5) {
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-            }
-            .frame(width: 28, height: 28)
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DT.fg)
+                .rotationEffect(.degrees(90))
+                .frame(width: 28, height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(DT.button)

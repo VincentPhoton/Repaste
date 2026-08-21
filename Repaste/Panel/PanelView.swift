@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 
 // MARK: - 面板主视图
 
-/// 面板主视图（宽 620、panelRadius 圆角、DT.panel 底色；高度自适应内容，超出内部滚动）
+/// 面板主视图（宽 500、panelRadius 圆角、DT.panel 底色；高度自适应内容，超出内部滚动）
 struct PanelView: View {
     let viewModel: PanelViewModel
 
@@ -22,12 +22,21 @@ struct PanelView: View {
     @FocusState private var searchFocused: Bool
 
     /// 面板当前高度（onGeometryChange 持续更新；菜单上下翻转与预览图片高度约束用）
-    @State private var panelHeight: CGFloat = 560
+    @State private var panelHeight: CGFloat = 500
 
-    /// 列表区最大高度（固定区约 180 + 列表 380 ≈ 面板最大约 560）
-    private static let listMaxHeight: CGFloat = 380
+    /// 来源条横向滚动位置（右侧箭头点击滚动用）
+    @State private var sourceScrollPos = ScrollPosition(edge: .leading)
+    /// 来源条滚动状态（当前偏移 + 最大可滚动距离；箭头显隐用）
+    @State private var sourceScrollState = HScrollState()
+    /// 标签页行横向滚动位置（滚轮映射用）
+    @State private var tabScrollPos = ScrollPosition(edge: .leading)
+    /// 标签页行滚动状态
+    @State private var tabScrollState = HScrollState()
+
+    /// 列表区最大高度（固定区约 90~125 + 列表 310 ≈ 面板最大 400，受 PanelController 上限约束）
+    private static let listMaxHeight: CGFloat = 310
     /// 列表区最小高度（内容少时保底，避免面板过扁）
-    private static let listMinHeight: CGFloat = 200
+    private static let listMinHeight: CGFloat = 180
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,7 +63,7 @@ struct PanelView: View {
             templateMenuOverlay
                 .animation(.easeOut(duration: 0.12), value: viewModel.templateMenuClip == nil)
         }
-        // 浏览器选择浮层（⌥ 点「跳转」触发，点浮层外任意处关闭）
+        // 浏览器选择浮层（⌥ 点「打开链接」触发，点浮层外任意处关闭）
         .overlay(alignment: .topLeading) {
             browserChooserOverlay
                 .animation(.easeOut(duration: 0.12), value: viewModel.browserChooserClip == nil)
@@ -72,7 +81,7 @@ struct PanelView: View {
         // toast 轻提示（面板顶部浮现，最上层）
         .overlay(alignment: .top) {
             toastOverlay
-                .animation(.easeOut(duration: 0.18), value: viewModel.toastText)
+                .animation(.easeOut(duration: 0.22), value: viewModel.toast)
         }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
@@ -208,12 +217,14 @@ struct PanelView: View {
             }
             .padding(.horizontal, 14)
         }
+        .modifier(HorizontalWheelScroll(position: $tabScrollPos, state: $tabScrollState))
         .padding(.bottom, 9)
     }
 
     // MARK: 来源条
 
     /// 来源条（横向滚动 chip 行：全部来源 + 各来源 App 图标 16×16 + 名称 + 计数；点击切换 / 再点取消）
+    /// （滚轮竖直滚动映射为横向滚动；右侧箭头前进 / 左侧箭头返回，到头自动隐藏）
     private var sourceBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
@@ -238,7 +249,60 @@ struct PanelView: View {
             }
             .padding(.horizontal, 14)
         }
+        .modifier(HorizontalWheelScroll(position: $sourceScrollPos, state: $sourceScrollState))
+        // 右侧前进箭头（未到最右端时显示；渐变衬底避免与末尾 chip 文字冲突）
+        .overlay(alignment: .trailing) {
+            if sourceScrollState.canScrollForward {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, DT.panel], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 30)
+                        .allowsHitTesting(false)
+                    sourceArrowButton(icon: "chevron.right", help: "查看更多来源") {
+                        nudgeSourceBar(by: 200)
+                    }
+                    .padding(.trailing, 5)
+                }
+                .transition(.opacity)
+            }
+        }
+        // 左侧返回箭头（已离开最左端时显示）
+        .overlay(alignment: .leading) {
+            if sourceScrollState.canScrollBackward {
+                HStack(spacing: 0) {
+                    sourceArrowButton(icon: "chevron.left", help: "查看前面的来源") {
+                        nudgeSourceBar(by: -200)
+                    }
+                    .padding(.leading, 5)
+                    LinearGradient(colors: [DT.panel, .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 30)
+                        .allowsHitTesting(false)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: sourceScrollState)
         .padding(.bottom, 9)
+    }
+
+    /// 来源条箭头点击滚动（步长 200，动画过渡；范围由 HScrollState 夹紧）
+    private func nudgeSourceBar(by delta: CGFloat) {
+        let target = min(sourceScrollState.maxX, max(0, sourceScrollState.offsetX + delta))
+        withAnimation(.easeOut(duration: 0.18)) {
+            sourceScrollPos = ScrollPosition(point: CGPoint(x: target, y: 0))
+        }
+    }
+
+    /// 来源条滚动箭头（22×22 圆形按钮、button 实底、无高光）
+    private func sourceArrowButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DT.fg)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(DT.button))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     /// 来源 chip（选中态白底黑字胶囊；未知来源用中性问号图标）
@@ -354,7 +418,7 @@ struct PanelView: View {
     /// 模板列表（行可拖拽排序；键盘选中滚动跟随；搜索同样生效）
     private var templateList: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 6) {
                     ForEach(Array(viewModel.filteredClips.enumerated()), id: \.element.id) { index, clip in
                         TemplateRow(
@@ -434,7 +498,7 @@ struct PanelView: View {
     /// 行列表（卡片间 6 间距、水平 padding 14；键盘选中滚动跟随）
     private var clipList: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 6) {
                     ForEach(Array(viewModel.filteredClips.enumerated()), id: \.element.id) { index, clip in
                         ClipRow(
@@ -551,9 +615,9 @@ struct PanelView: View {
         )
     }
 
-    // MARK: 浏览器选择浮层（⌥ 点「跳转」）
+    // MARK: 浏览器选择浮层（⌥ 点「打开链接」）
 
-    /// 浏览器选择浮层：透明点击层（点浮层外关闭）+ 菜单本体（按跳转按钮锚点定位，含上下翻转）
+    /// 浏览器选择浮层：透明点击层（点浮层外关闭）+ 菜单本体（按「打开链接」按钮锚点定位，含上下翻转）
     @ViewBuilder
     private var browserChooserOverlay: some View {
         ZStack(alignment: .topLeading) {
@@ -681,32 +745,53 @@ struct PanelView: View {
 
     // MARK: toast 轻提示
 
-    /// toast 浮层（面板顶部小黑底圆角条，1.2s 自动消失）
+    /// toast 浮层：面板顶部居中，紫色 ✓ + 主标题 + 副标题，紫边辉光黑底
     @ViewBuilder
     private var toastOverlay: some View {
-        if let toast = viewModel.toastText {
-            Text(toast)
-                .font(.system(size: 12))
-                .foregroundStyle(DT.fg)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(DT.surface3)
+        if let toast = viewModel.toast {
+            HStack(spacing: 6) {
+                Text("✓")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DT.accentBright)
+                Text(toast.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(DT.fgStrong)
+                if let subtitle = toast.subtitle, !subtitle.isEmpty {
+                    Text("·")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DT.muted2)
+                    Text(subtitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DT.muted)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(DT.toastBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(DT.accentLine, lineWidth: 1)
+            )
+            .shadow(color: Color(red: 139 / 255, green: 107 / 255, blue: 255 / 255, opacity: 0.22), radius: 20)
+            .shadow(color: .black.opacity(0.55), radius: 40, y: 12)
+            .padding(.top, 58)
+            .transition(
+                .asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: -8)),
+                    removal: .opacity.combined(with: .offset(y: -8))
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(DT.stroke, lineWidth: 1)
-                )
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            )
         }
     }
 
     // MARK: 键盘导航
 
     /// 键盘事件处理：弹窗打开时 esc 取消（其余交给弹窗输入框）；
-    /// ↑↓ 移动选中、⏎ 使用、⌘⏎ 跳转、⌘G 存入模板组、⌫ 删除、esc 逐层关闭（预览 / 菜单 / 搜索 / 面板）
+    /// ↑↓ 移动选中、⏎ 使用、⌘⏎ 打开链接、⌘G 存入模板组、⌫ 删除、esc 逐层关闭（预览 / 菜单 / 搜索 / 面板）
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
         // 弹窗打开：esc = 取消；Enter 由弹窗内输入框 onSubmit 提交主操作，其余按键透传
         if viewModel.activeDialog != nil {
@@ -732,7 +817,7 @@ struct PanelView: View {
             return .handled
         case .return:
             if press.modifiers.contains(.command) {
-                // ⌘⏎ 跳转：选中条目为链接类打开整串 URL；文本类打开首个 http(s) 链接；其他类型忽略
+                // ⌘⏎ 打开链接：选中条目为链接类打开整串 URL；文本类打开首个 http(s) 链接；其他类型忽略
                 if let index = viewModel.selectionIndex, viewModel.filteredClips.indices.contains(index) {
                     viewModel.openLink(clip: viewModel.filteredClips[index], kind: "hotkey")
                 }
@@ -788,7 +873,7 @@ private struct SmallTextButton: View {
 // MARK: - 面板底形状
 
 /// 面板底：centered 模式四角 panelRadius 圆角；
-/// notch 模式顶部平边（贴合菜单栏下沿，顶部无圆角无描边）
+/// notch 模式顶部平边（贴合菜单栏下沿，顶部无圆角）；无边框描边
 private struct PanelShapeBackground: ViewModifier {
     let isNotch: Bool
 
@@ -803,22 +888,100 @@ private struct PanelShapeBackground: ViewModifier {
         return content
             .background(shape.fill(DT.panel))
             .clipShape(shape)
-            .overlay(shape.strokeBorder(DT.strokeStrong, lineWidth: 1))
-            .overlay(alignment: .top) {
-                if isNotch {
-                    // 盖掉顶部描边（notch 模式顶边贴合菜单栏，不画描边）
-                    Rectangle()
-                        .fill(DT.panel)
-                        .frame(height: 2)
-                }
-            }
     }
 }
 
 extension View {
-    /// 应用面板底形状（notch 顶部平边 / centered 四角圆角 + panel 底色 + strokeStrong 描边）
+    /// 应用面板底形状（notch 顶部平边 / centered 四角圆角 + panel 底色，无边框）
     func panelShapeBackground(isNotch: Bool) -> some View {
         modifier(PanelShapeBackground(isNotch: isNotch))
+    }
+}
+
+// MARK: - 横向滚动增强（macOS）
+
+/// 横向条滚动状态（当前偏移 + 最大可滚动距离；箭头显隐与滚轮换算用）
+private struct HScrollState: Equatable {
+    var offsetX: CGFloat = 0
+    var maxX: CGFloat = 0
+
+    /// 已离开最左端，可向左返回
+    var canScrollBackward: Bool { offsetX > 0.5 }
+    /// 未到最右端，可向右前进
+    var canScrollForward: Bool { offsetX < maxX - 0.5 }
+}
+
+/// 竖直滚轮 → 横向滚动桥接（macOS 鼠标滚轮默认无法驱动横向 ScrollView）
+/// 通过本地事件监视器拦截自身范围内的竖直滚轮事件；横滑（deltaX 主导）不受影响，原样放行
+private struct VerticalWheelBridge: NSViewRepresentable {
+    /// deltaY 向上为正；precise = 触控板等精细增量（按点数计，无需放大）
+    var onWheel: (_ deltaY: CGFloat, _ precise: Bool) -> Void
+
+    final class BridgeView: NSView {
+        var onWheel: ((CGFloat, Bool) -> Void)?
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self,
+                      let window = self.window,
+                      event.window === window,
+                      abs(event.deltaY) > abs(event.deltaX) else { return event }
+                let location = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(location) else { return event }
+                self.onWheel?(event.deltaY, event.hasPreciseScrollingDeltas)
+                return nil
+            }
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+    }
+
+    func makeNSView(context: Context) -> BridgeView {
+        let view = BridgeView()
+        view.onWheel = onWheel
+        return view
+    }
+
+    func updateNSView(_ view: BridgeView, context: Context) {
+        view.onWheel = onWheel
+    }
+}
+
+/// 横向滚动增强：scrollPosition 绑定 + 滚动几何跟踪 + 竖直滚轮映射为横向滚动
+/// （来源条 / 标签页行共用；触控板横滑走系统原生行为）
+private struct HorizontalWheelScroll: ViewModifier {
+    @Binding var position: ScrollPosition
+    @Binding var state: HScrollState
+
+    /// 非精细滚轮（普通鼠标）每格滚动的点数
+    private static let wheelStep: CGFloat = 16
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: HScrollState.self) { geo in
+                HScrollState(
+                    offsetX: geo.contentOffset.x,
+                    maxX: max(0, geo.contentSize.width - geo.containerSize.width)
+                )
+            } action: { _, newValue in
+                state = newValue
+            }
+            .background(
+                VerticalWheelBridge { deltaY, precise in
+                    // 滚轮向上 → 回到左侧；向下（含触控板自然滚动）→ 前进到右侧
+                    let delta = -deltaY * (precise ? 1 : Self.wheelStep)
+                    let target = min(state.maxX, max(0, state.offsetX + delta))
+                    position = ScrollPosition(point: CGPoint(x: target, y: 0))
+                }
+            )
     }
 }
 

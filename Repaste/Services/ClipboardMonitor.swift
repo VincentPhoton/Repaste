@@ -87,8 +87,9 @@ final class ClipboardMonitor: NSObject {
         startTimers()
     }
 
-    /// 应用自己写回剪贴板（复制动作）后调用：记录当前 changeCount，
-    /// 下一次轮询跳过该写入，避免刚复制的条目再次入库置顶（防自吞；PasteboardService 调用）
+    /// 应用自己写回剪贴板（复制动作）后调用：记录写回完成时的 changeCount，
+    /// 后续轮询跳过所有 ≤ 该值的变化（写回分多步，changeCount 会递增多次），
+    /// 避免刚复制的条目再次入库置顶（防自吞；PasteboardWriter 调用）
     func markExternalWrite() {
         externalWriteChangeCount = NSPasteboard.general.changeCount
     }
@@ -145,11 +146,15 @@ final class ClipboardMonitor: NSObject {
         guard count != lastChangeCount else { return }
         lastChangeCount = count
 
-        // 防自吞：changeCount 单调递增，相等即应用自己的写回；
-        // 更大则说明写回之后又有新复制，标记过期、继续处理新内容
+        // 防自吞：写回分多步（清空 + 逐类型 setData），changeCount 会递增多次，
+        // 轮询可能先撞上中途值——跳过所有 ≤ 记录值的变化（到达记录值才消费标记）；
+        // 超过记录值说明写回之后又有新复制，清标记继续处理新内容
         if let external = externalWriteChangeCount {
+            if count <= external {
+                if count == external { externalWriteChangeCount = nil }
+                return
+            }
             externalWriteChangeCount = nil
-            if count == external { return }
         }
 
         handleChange(pasteboard: pasteboard, since: since)
@@ -245,6 +250,16 @@ final class ClipboardMonitor: NSObject {
                 byteSize: url.utf8.count
             )
         case let .image(data, format, pixelW, pixelH):
+            // 图片内容级去重（须在落盘前）：图片写入剪贴板分多步（清空 + tiff/png 逐类型写入），
+            // changeCount 递增多次会跨轮询触发重复捕获；且图片每次落盘都是新 UUID 文件名，
+            // 按 payloadRef 比对永远不相等——必须与最新图片条目按数据本身比对
+            if let duplicate = duplicateImageLatest(
+                data: data, format: format, pixelW: pixelW, pixelH: pixelH
+            ) {
+                ClipboardStore.shared.touch(clip: duplicate)
+                EventLog.track(EventLog.clipCaptured, ["kind": duplicate.kind, "dedup": "true"])
+                return
+            }
             // 落盘（原图 + 40×40 缩略图），payloadRef 记原图文件名
             let (originalName, _) = ImageStore.shared.save(data: data, format: format)
             clip = Clip(
@@ -273,7 +288,8 @@ final class ClipboardMonitor: NSObject {
             )
         }
 
-        // 去重：与最近一条历史条目完全相同（kind + payloadText/payloadRef）→ 不重复入库，
+        // 去重（文本/链接/文件；图片已在上方按内容提前去重）：
+        // 与最近一条历史条目完全相同（kind + payloadText/payloadRef）→ 不重复入库，
         // 刷新其 createdAt 到当前时刻（置顶效果；置顶条目同样刷新位置）
         if let latest = ClipboardStore.shared.latestClip(),
            latest.kind == clip.kind,
@@ -293,6 +309,21 @@ final class ClipboardMonitor: NSObject {
             "source": source?.bundleId ?? "unknown",
             "bytes": String(clip.byteSize),
         ])
+    }
+
+    /// 图片内容级去重：最新历史条目为图片且数据逐字节一致时返回该条目
+    /// （先比对 byteSize / 像素尺寸 / 格式短路，避免无谓读盘；原图已被 TTL 清理时读不到数据，按不同处理、重新落盘）
+    private func duplicateImageLatest(data: Data, format: String, pixelW: Int, pixelH: Int) -> Clip? {
+        guard let latest = ClipboardStore.shared.latestClip(),
+              latest.kindEnum == .image,
+              latest.byteSize == data.count,
+              latest.pixelWidth == pixelW,
+              latest.pixelHeight == pixelH,
+              latest.format == format,
+              let ref = latest.payloadRef,
+              let latestData = try? Data(contentsOf: ImageStore.shared.fileURL(name: ref)),
+              latestData == data else { return nil }
+        return latest
     }
 
     // MARK: 图片 TTL

@@ -60,6 +60,11 @@ enum DT {
     /// 菜单浮层底色 #232323（⋮ 更多菜单，比面板底亮一档以区分层级）
     static let menuSurface = Color(red: 35 / 255, green: 35 / 255, blue: 35 / 255)
 
+    /// Toast 背景 rgba(16,16,22,.94)
+    static let toastBackground = Color(red: 16 / 255, green: 16 / 255, blue: 22 / 255, opacity: 0.94)
+    /// Toast 紫色描边（accent 45% 透明度）
+    static let accentLine = Color(red: 139 / 255, green: 107 / 255, blue: 255 / 255, opacity: 0.45)
+
     /// 描边：白色 10% 透明度 rgba(255,255,255,.10)
     static let stroke = Color(red: 1, green: 1, blue: 1, opacity: 0.10)
     /// 强描边：白色 18% 透明度
@@ -83,7 +88,7 @@ enum DT {
     // MARK: 尺寸
 
     /// 面板宽度
-    static let panelWidth: CGFloat = 620
+    static let panelWidth: CGFloat = 500
 
     // MARK: 字体
 

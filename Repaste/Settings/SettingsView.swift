@@ -8,6 +8,8 @@
 
 import SwiftUI
 import AppKit
+import Observation
+import Carbon.HIToolbox
 import Combine
 import UniformTypeIdentifiers
 
@@ -43,12 +45,58 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 确认弹窗中心
+
+/// 设置窗口确认弹窗状态：卡片触发、根视图统一渲染。
+/// 弹窗浮层挂在设置窗口根视图上（覆盖侧栏与内容区），弹窗天然位于窗口正中（同面板弹窗模式）
+@Observable
+final class SettingsDialogCenter {
+    /// 弹窗种类
+    enum Dialog: Equatable {
+        case none
+        /// 辅助功能授权引导（粘贴目标）
+        case auth
+        /// 清空历史确认
+        case clearHistory
+        /// 清空图片确认
+        case clearImages
+    }
+
+    /// 当前弹窗
+    var active: Dialog = .none
+
+    /// 已选「到正在使用的应用」但尚未授权（等待授权中；单选保持选中 + 回退标注）
+    var pendingAppTarget = false
+
+    static let shared = SettingsDialogCenter()
+
+    private init() {}
+
+    /// 弹出确认浮层
+    func present(_ dialog: Dialog) {
+        active = dialog
+    }
+
+    /// 确认路径关闭浮层（不触发取消回落）
+    func dismiss() {
+        active = .none
+    }
+
+    /// 取消当前浮层（遮罩点击 / 取消按钮统一走这里；授权弹窗取消回落「到剪贴板」）
+    func cancel() {
+        if active == .auth { pendingAppTarget = false }
+        active = .none
+    }
+}
+
 // MARK: - 设置窗口主视图
 
 /// 设置窗口主视图：左分类导航 + 右内容区（分类标题 + 分组卡片）
 struct SettingsView: View {
     /// 当前选中分类
     @State private var selection: SettingsSection = .general
+    /// 确认弹窗中心（卡片触发、根视图统一渲染）
+    private let dialogs = SettingsDialogCenter.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -57,6 +105,11 @@ struct SettingsView: View {
         }
         .frame(minWidth: 680, minHeight: 460)
         .preferredColorScheme(.dark)
+        // 确认弹窗浮层（盖住整个设置窗口，弹窗在窗口正中）
+        .overlay {
+            dialogOverlay
+                .animation(.easeOut(duration: 0.15), value: dialogs.active == .none)
+        }
         .background(
             // esc 关闭窗口（隐藏按钮承载 cancelAction 快捷键；红绿灯标题栏由系统保留）
             Button("") { NSApp.keyWindow?.close() }
@@ -67,9 +120,75 @@ struct SettingsView: View {
         )
     }
 
+    // MARK: 确认弹窗浮层
+
+    /// 确认浮层：半透明遮罩（点击取消）+ 窗口正中圆角卡片
+    @ViewBuilder
+    private var dialogOverlay: some View {
+        if dialogs.active != .none {
+            ZStack {
+                Color.black.opacity(0.52)
+                    .onTapGesture { dialogs.cancel() }
+                dialogCard
+            }
+            .transition(.opacity)
+        }
+    }
+
+    /// 按弹窗种类分发内容卡片
+    @ViewBuilder
+    private var dialogCard: some View {
+        switch dialogs.active {
+        case .none:
+            EmptyView()
+        case .auth:
+            PanelDialogCard(
+                title: "需要辅助功能授权",
+                subtitle: "需要你在系统设置中为 Repaste 开启辅助功能，才能直接粘贴到正在使用的应用。",
+                cancelTitle: "暂不",
+                confirmTitle: "去授权",
+                onCancel: {
+                    // 暂不：回落「到剪贴板」
+                    dialogs.cancel()
+                },
+                onConfirm: {
+                    // 弹系统授权引导；pendingAppTarget 保持，授权回来后（窗口激活复核）自动生效
+                    dialogs.dismiss()
+                    AutoPaster.requestAuthorization()
+                }
+            ) { EmptyView() }
+        case .clearHistory:
+            PanelDialogCard(
+                title: "清空历史",
+                subtitle: "清空后无法恢复，模板组内容会保留。",
+                cancelTitle: "取消",
+                confirmTitle: "清空",
+                confirmColor: DT.danger,
+                onCancel: { dialogs.cancel() },
+                onConfirm: {
+                    dialogs.dismiss()
+                    ClipboardStore.shared.clearHistory()
+                }
+            ) { EmptyView() }
+        case .clearImages:
+            PanelDialogCard(
+                title: "清空图片",
+                subtitle: "将删除全部图片条目与原图文件（模板内图片一并删除），无法恢复。",
+                cancelTitle: "取消",
+                confirmTitle: "清空",
+                confirmColor: DT.danger,
+                onCancel: { dialogs.cancel() },
+                onConfirm: {
+                    dialogs.dismiss()
+                    ClipboardStore.shared.clearImages()
+                }
+            ) { EmptyView() }
+        }
+    }
+
     // MARK: 左侧分类导航
 
-    /// 侧栏：宽 200、surface2 底、右缘 1px 分隔线；选中项 = 白底黑字左对齐胶囊
+    /// 侧栏：宽度自适应内容（仅保留文字两侧必要间距）、surface2 底、右缘 1px 分隔线；选中项 = 白底黑字左对齐胶囊
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(SettingsSection.allCases) { section in
@@ -79,7 +198,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 16)
-        .frame(width: 200)
+        .fixedSize(horizontal: true, vertical: false)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(DT.surface2)
         .overlay(alignment: .trailing) {
@@ -103,6 +222,8 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            // 所有项撑满侧栏宽度（= 最长项「历史与隐私」的宽度），统一点击区域与选中胶囊尺寸
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Capsule().fill(isSelected ? Color.white : Color.clear))
             .contentShape(Capsule())
         }
@@ -167,7 +288,7 @@ struct GeneralSettingsCards: View {
 
             // 面板
             SettingsGroupCard(title: "面板") {
-                VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
                     SettingsRow(title: "打开历史时默认显示") {
                         SettingsPicker(
                             options: [
@@ -197,7 +318,7 @@ struct GeneralSettingsCards: View {
 
             // 链接
             SettingsGroupCard(title: "链接") {
-                SettingsRow(title: "默认浏览器", subtitle: "按住 ⌥ 点「跳转」可临时更换") {
+                SettingsRow(title: "默认浏览器", subtitle: "按住 ⌥ 点「打开链接」可临时更换") {
                     SettingsPicker(options: browserOptions, selection: $settings.defaultBrowser)
                 }
             }
@@ -223,17 +344,15 @@ struct GeneralSettingsCards: View {
 /// 未授权期间该项保持视觉选中并标注「未授权，当前回退到剪贴板」，pasteTarget 实际保持 "clipboard"。
 struct PasteTargetCard: View {
     @Bindable private var settings = SettingsStore.shared
+    /// 确认弹窗中心（授权引导浮层由设置窗口根部渲染）
+    private let dialogs = SettingsDialogCenter.shared
 
     /// 辅助功能授权状态（选中当下与窗口重新激活时复核）
     @State private var axAuthorized = AutoPaster.isAuthorized()
-    /// 已选「到正在使用的应用」但尚未授权（等待授权中；单选保持选中 + 回退标注）
-    @State private var pendingAppTarget = false
-    /// 授权引导浮层
-    @State private var showAuthSheet = false
 
     var body: some View {
         SettingsGroupCard(title: "粘贴", subtitle: "选择使用条目时的粘贴去向，改动即时生效") {
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 14) {
                 PasteTargetRow(
                     title: "到剪贴板",
                     subtitle: "复制选中项至系统剪贴板，后续使用时手动粘贴。",
@@ -245,7 +364,7 @@ struct PasteTargetCard: View {
                     title: "到正在使用的应用",
                     subtitle: "将选中项直接粘贴至你正在使用的应用中。",
                     isSelected: selectedTarget == "app",
-                    fallbackNote: pendingAppTarget && !axAuthorized ? "未授权，当前回退到剪贴板" : nil
+                    fallbackNote: dialogs.pendingAppTarget && !axAuthorized ? "未授权，当前回退到剪贴板" : nil
                 ) {
                     selectApp()
                 }
@@ -256,30 +375,12 @@ struct PasteTargetCard: View {
             // 从系统设置授权回来：复核授权状态，待定选择自动生效
             refreshAuthorization()
         }
-        .modifier(SettingsConfirmSheet(isPresented: $showAuthSheet) {
-            PanelDialogCard(
-                title: "需要辅助功能授权",
-                subtitle: "需要你在系统设置中为 Repaste 开启辅助功能，才能直接粘贴到正在使用的应用。",
-                cancelTitle: "暂不",
-                confirmTitle: "去授权",
-                onCancel: {
-                    showAuthSheet = false
-                    // 暂不：回落「到剪贴板」
-                    pendingAppTarget = false
-                },
-                onConfirm: {
-                    showAuthSheet = false
-                    // 弹系统授权引导；pendingAppTarget 保持，授权回来后（窗口激活复核）自动生效
-                    AutoPaster.requestAuthorization()
-                }
-            ) { EmptyView() }
-        })
     }
 
     /// 单选选中态：授权前「到正在使用的应用」保持视觉选中（pasteTarget 仍为 clipboard）
     private var selectedTarget: String {
         if settings.pasteTarget == "app" { return "app" }
-        if pendingAppTarget && !axAuthorized { return "app" }
+        if dialogs.pendingAppTarget && !axAuthorized { return "app" }
         return "clipboard"
     }
 
@@ -287,7 +388,7 @@ struct PasteTargetCard: View {
 
     /// 选「到剪贴板」：直接提交
     private func selectClipboard() {
-        pendingAppTarget = false
+        dialogs.pendingAppTarget = false
         if settings.pasteTarget != "clipboard" {
             settings.pasteTarget = "clipboard"
             EventLog.track(EventLog.pasteTargetChanged, ["to": "clipboard"])
@@ -299,14 +400,14 @@ struct PasteTargetCard: View {
         if AutoPaster.isAuthorized() {
             commitAppTarget()
         } else {
-            pendingAppTarget = true
-            showAuthSheet = true
+            dialogs.pendingAppTarget = true
+            dialogs.present(.auth)
         }
     }
 
     /// 提交「到正在使用的应用」（已授权）
     private func commitAppTarget() {
-        pendingAppTarget = false
+        dialogs.pendingAppTarget = false
         axAuthorized = true
         settings.accessibilityGranted = true
         if settings.pasteTarget != "app" {
@@ -322,11 +423,11 @@ struct PasteTargetCard: View {
         axAuthorized = authorized
         if authorized {
             settings.accessibilityGranted = true
-            if pendingAppTarget { commitAppTarget() }
+            if dialogs.pendingAppTarget { commitAppTarget() }
         } else if settings.pasteTarget == "app" {
             settings.pasteTarget = "clipboard"
             settings.accessibilityGranted = false
-            pendingAppTarget = true
+            dialogs.pendingAppTarget = true
         }
     }
 }
@@ -376,7 +477,7 @@ struct SummonSettingsCards: View {
         VStack(spacing: 12) {
             // 刘海悬停
             SettingsGroupCard(title: "刘海悬停") {
-                VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
                     SettingsRow(title: "刘海悬停呼出") {
                         MatteToggle(isOn: settings.hoverEnabled) {
                             // 关闭时 hover_disabled 事件由 HotZoneWatcher 动态卸载监听时统一记录
@@ -405,18 +506,18 @@ struct SummonSettingsCards: View {
                 }
             }
 
-            // 快捷键（只读展示）
+            // 快捷键
             SettingsGroupCard(title: "快捷键") {
-                VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
                     SettingsRow(title: "呼出快捷键") {
-                        KbdKey(text: SettingsStore.hotkeyDisplay)
+                        ShortcutCaptureButton()
                     }
                     // 面板操作静态说明（等宽小字）
                     VStack(alignment: .leading, spacing: 5) {
                         Text("面板操作")
                             .font(.system(size: 11.5))
                             .foregroundStyle(DT.muted)
-                        Text("↑↓ 选择 · ⏎ 粘贴 · ⌘⏎ 跳转 · ⌘G 存入模板组 · esc 关闭")
+                        Text("↑↓ 选择 · ⏎ 粘贴 · ⌘⏎ 打开链接 · ⌘G 存入模板组 · esc 关闭")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(DT.muted2)
                     }
@@ -436,7 +537,7 @@ struct HistorySettingsCards: View {
         VStack(spacing: 12) {
             // 历史：保留条数 + 图片保留天数
             SettingsGroupCard(title: "历史") {
-                VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
                     SettingsRow(title: "保留条数") {
                         SettingsPicker(
                             options: [
@@ -484,7 +585,7 @@ struct PrivacyCard: View {
 
     var body: some View {
         SettingsGroupCard(title: "隐私") {
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 14) {
                 // 只读锁定项：concealed 内容永不入库（始终开启，不可关闭）
                 HStack(spacing: 10) {
                     Image(systemName: "lock.fill")
@@ -550,7 +651,10 @@ struct PrivacyCard: View {
         }
     }
 
-    /// NSOpenPanel 选 .app（起始目录 /Applications），写入 ignoredBundleIds
+    /// NSOpenPanel 选 .app（起始目录 /Applications），写入 ignoredBundleIds。
+    /// beginSheetModal 窗口级模态（sheet 贴在设置窗口上），不用 runModal——
+    /// runModal 起应用级模态事件循环，期间主事件循环被阻塞，刘海面板的
+    /// 热区收起定时器与全部事件投递都会停摆
     private func addIgnoredApp() {
         let panel = NSOpenPanel()
         panel.title = "添加忽略应用"
@@ -560,11 +664,15 @@ struct PrivacyCard: View {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.application]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        guard panel.runModal() == .OK,
-              let url = panel.url,
-              let bundleId = Bundle(url: url)?.bundleIdentifier,
-              !settings.ignoredBundleIds.contains(bundleId) else { return }
-        settings.ignoredBundleIds.append(bundleId)
+        // 设置窗口承载 sheet（点按钮时设置窗口必为 key window）
+        guard let window = NSApp.keyWindow else { return }
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK,
+                  let url = panel.url,
+                  let bundleId = Bundle(url: url)?.bundleIdentifier,
+                  !settings.ignoredBundleIds.contains(bundleId) else { return }
+            settings.ignoredBundleIds.append(bundleId)
+        }
     }
 }
 
@@ -637,12 +745,10 @@ struct IgnoredAppChip: View {
 
 // MARK: - 存储卡片
 
-/// 存储卡片：总条数 + 按类型分解（文本 / 图片 / 链接 / 文件）+ 清空历史 / 清空图片（自绘确认浮层）
+/// 存储卡片：总条数 + 按类型分解（文本 / 图片 / 链接 / 文件）+ 清空历史 / 清空图片（确认浮层由窗口根部渲染）
 struct StorageCard: View {
-    /// 清空历史确认浮层
-    @State private var showClearHistorySheet = false
-    /// 清空图片确认浮层
-    @State private var showClearImagesSheet = false
+    /// 确认弹窗中心（清空确认浮层由设置窗口根部渲染）
+    private let dialogs = SettingsDialogCenter.shared
     /// 存储概览
     @State private var stats = StorageStats()
 
@@ -657,17 +763,17 @@ struct StorageCard: View {
 
     var body: some View {
         SettingsGroupCard(title: "存储") {
-            VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 14) {
                 // 总条数 + 按类型分解
                 Text("共 \(stats.total) 条 · 文本 \(stats.text) · 图片 \(stats.image) · 链接 \(stats.link) · 文件 \(stats.file)")
                     .font(.system(size: 12.5))
                     .foregroundStyle(DT.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 SettingsRow(title: "清空历史", subtitle: "删除全部历史条目，模板组内容会保留") {
-                    DangerButton(title: "清空") { showClearHistorySheet = true }
+                    DangerButton(title: "清空") { dialogs.present(.clearHistory) }
                 }
                 SettingsRow(title: "清空图片", subtitle: "删除全部图片条目与原图文件") {
-                    DangerButton(title: "清空") { showClearImagesSheet = true }
+                    DangerButton(title: "清空") { dialogs.present(.clearImages) }
                 }
             }
         }
@@ -676,36 +782,10 @@ struct StorageCard: View {
             // 窗口激活时刷新概览（外部可能已新增 / 清空条目）
             refreshStats()
         }
-        .modifier(SettingsConfirmSheet(isPresented: $showClearHistorySheet) {
-            PanelDialogCard(
-                title: "清空历史",
-                subtitle: "清空后无法恢复，模板组内容会保留。",
-                cancelTitle: "取消",
-                confirmTitle: "清空",
-                confirmColor: DT.danger,
-                onCancel: { showClearHistorySheet = false },
-                onConfirm: {
-                    showClearHistorySheet = false
-                    ClipboardStore.shared.clearHistory()
-                    refreshStats()
-                }
-            ) { EmptyView() }
-        })
-        .modifier(SettingsConfirmSheet(isPresented: $showClearImagesSheet) {
-            PanelDialogCard(
-                title: "清空图片",
-                subtitle: "将删除全部图片条目与原图文件（模板内图片一并删除），无法恢复。",
-                cancelTitle: "取消",
-                confirmTitle: "清空",
-                confirmColor: DT.danger,
-                onCancel: { showClearImagesSheet = false },
-                onConfirm: {
-                    showClearImagesSheet = false
-                    ClipboardStore.shared.clearImages()
-                    refreshStats()
-                }
-            ) { EmptyView() }
-        })
+        .onChange(of: dialogs.active) { _, newValue in
+            // 清空确认浮层关闭后刷新概览（确认清空在窗口根部执行）
+            if newValue == .none { refreshStats() }
+        }
     }
 
     /// 读取 ClipboardStore 统计全部条目（按类型分解）
@@ -720,33 +800,6 @@ struct StorageCard: View {
             }
         }
         stats = next
-    }
-}
-
-// MARK: - 卡片级确认浮层
-
-/// 卡片级确认浮层修饰器：全窗口半透明遮罩 + 卡片居中弹窗（自绘，不用 NSAlert）。
-/// 仅呈现时挂 overlay 并提升 zIndex（不覆盖卡片自身下拉的层级）
-private struct SettingsConfirmSheet<SheetContent: View>: ViewModifier {
-    @Binding var isPresented: Bool
-    @ViewBuilder let sheetContent: () -> SheetContent
-
-    func body(content: Content) -> some View {
-        if isPresented {
-            content
-                .overlay {
-                    ZStack {
-                        // 遮罩大于窗口（覆盖侧栏与内容区），点击收起
-                        Color.black.opacity(0.52)
-                            .frame(width: 2400, height: 1600)
-                            .onTapGesture { isPresented = false }
-                        sheetContent()
-                    }
-                }
-                .zIndex(20)
-        } else {
-            content
-        }
     }
 }
 
@@ -789,7 +842,7 @@ struct SettingsGroupCard<Content: View>: View {
     }
 }
 
-/// 设置行：左标签 13pt fg + 说明 11.5pt muted 第二行；右侧控件
+/// 设置行：左标签 13pt fg + 说明 11.5pt muted 第二行；控件紧跟标签左侧对齐
 struct SettingsRow<Control: View>: View {
     let title: String
     var subtitle: String? = nil
@@ -807,9 +860,9 @@ struct SettingsRow<Control: View>: View {
                         .foregroundStyle(DT.muted)
                 }
             }
-            Spacer(minLength: 12)
             control()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -871,6 +924,91 @@ struct KbdKey: View {
             .overlay(
                 RoundedRectangle(cornerRadius: DT.innerCardRadius, style: .continuous).strokeBorder(DT.stroke, lineWidth: 1)
             )
+    }
+}
+
+/// 快捷键捕获按钮：点击后监听下一次按键组合并保存；再次点击或按 esc 取消
+struct ShortcutCaptureButton: View {
+    @Bindable private var settings = SettingsStore.shared
+
+    /// 是否处于捕获模式
+    @State private var isCapturing = false
+    /// 本地键盘事件监听器
+    @State private var localMonitor: Any?
+
+    var body: some View {
+        Button {
+            isCapturing.toggle()
+        } label: {
+            Text(isCapturing ? "按下快捷键…" : settings.hotkeyDisplay)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(isCapturing ? DT.muted2 : DT.fg)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .frame(minWidth: 70)
+                .background(
+                    RoundedRectangle(cornerRadius: DT.innerCardRadius, style: .continuous)
+                        .fill(isCapturing ? DT.surface3 : DT.button)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DT.innerCardRadius, style: .continuous)
+                        .strokeBorder(isCapturing ? DT.accent.opacity(0.6) : DT.stroke, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .onChange(of: isCapturing) { _, active in
+            if active {
+                startCapturing()
+            } else {
+                stopCapturing()
+            }
+        }
+        .onDisappear { stopCapturing() }
+    }
+
+    // MARK: 捕获逻辑
+
+    private func startCapturing() {
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak settings] event in
+            guard let settings else { return event }
+
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            // esc 单独按下：取消捕获，让事件继续传播
+            if event.keyCode == UInt16(kVK_Escape) && flags.isEmpty {
+                DispatchQueue.main.async { self.isCapturing = false }
+                return event
+            }
+
+            // 必须包含至少一个功能修饰键
+            let hasModifier = flags.contains(.command) || flags.contains(.option) ||
+                              flags.contains(.control) || flags.contains(.shift)
+            guard hasModifier else { return nil }
+
+            // 排除纯修饰键按键
+            let isModifierOnly = event.keyCode == UInt16(kVK_Shift) ||
+                                 event.keyCode == UInt16(kVK_Command) ||
+                                 event.keyCode == UInt16(kVK_Option) ||
+                                 event.keyCode == UInt16(kVK_Control)
+            guard !isModifierOnly else { return nil }
+
+            let carbonMods = HotKeyDisplay.carbonModifiers(from: flags)
+            guard carbonMods != 0 else { return nil }
+
+            settings.hotkeyKeyCode = Int(event.keyCode)
+            settings.hotkeyModifiers = carbonMods
+            DispatchQueue.main.async { self.isCapturing = false }
+
+            return nil
+        }
+    }
+
+    private func stopCapturing() {
+        if let monitor = localMonitor {
+            NSEvent.removeMonitor(monitor)
+            localMonitor = nil
+        }
+        isCapturing = false
     }
 }
 
@@ -980,6 +1118,7 @@ struct SettingsPicker: View {
             }
             .padding(.horizontal, 11)
             .frame(width: width, height: Self.buttonHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(

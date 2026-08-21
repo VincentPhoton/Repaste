@@ -23,12 +23,12 @@ extension HoverSensitivity {
         }
     }
 
-    /// 面板收起后的冷却时长（毫秒，冷却内进入热区不触发）：敏感 600 / 默认 800 / 迟缓 1200
+    /// 面板收起后的冷却时长（毫秒，冷却内进入热区不触发）：敏感 300 / 默认 500 / 迟缓 800
     var cooldownMillis: Int {
         switch self {
-        case .sensitive: return 600
-        case .default: return 800
-        case .slow: return 1200
+        case .sensitive: return 300
+        case .default: return 500
+        case .slow: return 800
         }
     }
 }

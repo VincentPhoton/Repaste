@@ -28,20 +28,34 @@ final class HotKeyManager {
     private var handlerRef: EventHandlerRef?
     /// App 退出通知 token
     private var terminateToken: (any NSObjectProtocol)?
+    /// 设置变化通知 token（快捷键 keyCode / modifiers 变化后重启注册）
+    private var settingsChangeToken: (any NSObjectProtocol)?
 
-    private init() {}
+    private init() {
+        // 监听 UserDefaults 变化：快捷键被修改后重新注册
+        settingsChangeToken = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.restart()
+        }
+    }
 
     // MARK: 生命周期
 
-    /// 注册 ⌥⇧V 并安装事件处理器（幂等）
+    /// 从 SettingsStore 读取当前快捷键并注册，安装事件处理器（幂等）
     func start() {
         guard hotKeyRef == nil else { return }
 
-        // 注册热键：kVK_ANSI_V == 9；carbon 修饰键常量 optionKey | shiftKey（合法自由组合，无系统冲突）
+        let keyCode = UInt32(SettingsStore.shared.hotkeyKeyCode)
+        let modifiers = SettingsStore.shared.hotkeyModifiers
+
+        // 注册热键：合法自由组合，无系统冲突；被占用时静默失败，刘海入口仍可用
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
-            UInt32(kVK_ANSI_V),
-            UInt32(optionKey | shiftKey),
+            keyCode,
+            modifiers,
             EventHotKeyID(signature: Self.signature, id: Self.hotKeyID),
             GetApplicationEventTarget(),
             0,
@@ -122,6 +136,18 @@ final class HotKeyManager {
         if let terminateToken {
             NotificationCenter.default.removeObserver(terminateToken)
             self.terminateToken = nil
+        }
+    }
+
+    /// 重新注册快捷键（设置变化后调用）
+    func restart() {
+        stop()
+        start()
+    }
+
+    deinit {
+        if let settingsChangeToken {
+            NotificationCenter.default.removeObserver(settingsChangeToken)
         }
     }
 

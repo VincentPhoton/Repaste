@@ -3,7 +3,7 @@
 //  Repaste
 //
 //  ⋮ 更多菜单：自绘哑光黑浮层（menuSurface 底、14 圆角、项 hover stroke、danger 红）
-//  菜单项按 kind 组合：文本=无格式复制；图片=查看图片；链接/文件无专属动作（跳转已外置）
+//  菜单项按 kind 组合：文本=无格式复制；图片=查看图片；链接/文件无专属动作（打开链接已外置为行内按钮）
 //
 
 import SwiftUI
@@ -52,7 +52,7 @@ struct ClipMoreMenu: View {
                 item(.viewImage, icon: "photo", title: "查看图片")
                 separator
             }
-            // 通用动作：存组（⌘G）/ 固定 / 删除（链接与文件的跳转已外置为行内主按钮，不在菜单内）
+            // 通用动作：存组（⌘G）/ 固定 / 删除（链接打开已外置为行内「打开链接」按钮，不在菜单内）
             item(.saveToGroup, icon: "folder.badge.plus", title: "存入模板组…", hotkey: "⌘G")
             item(.togglePin, icon: clip.pinned ? "pin.slash" : "pin", title: clip.pinned ? "取消固定" : "固定到顶部")
             item(.delete, icon: "trash", title: "删除", isDanger: true)

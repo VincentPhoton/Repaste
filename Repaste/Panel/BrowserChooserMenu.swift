@@ -2,7 +2,7 @@
 //  BrowserChooserMenu.swift
 //  Repaste
 //
-//  浏览器选择浮层：⌥ 点「跳转」弹出的面板内自绘浮层（menuSurface 底、14 圆角），
+//  浏览器选择浮层：⌥ 点「打开链接」弹出的面板内自绘浮层（menuSurface 底、14 圆角），
 //  只列出已安装的浏览器；点选后用该浏览器打开链接（不用系统 menu）
 //
 

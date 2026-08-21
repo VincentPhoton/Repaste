@@ -7,18 +7,14 @@
 
 import SwiftUI
 import AppKit
-import SwiftData
 
 @main
 struct RepasteApp: App {
     /// 面板控制器单例（App 启动即创建并持有，后续任务承载刘海面板）
     private let panelController: PanelController
 
-    /// 录制开关（UserDefaults 键 recording_enabled，默认开启）
-    @AppStorage("recording_enabled") private var recordingEnabled = true
-
-    /// 用于打开设置窗口
-    @Environment(\.openWindow) private var openWindow
+    /// App 代理：启动完成后触发首启引导
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         // 创建并持有面板控制器单例
@@ -33,85 +29,130 @@ struct RepasteApp: App {
     }
 
     var body: some Scene {
-        // 常驻菜单栏入口
-        MenuBarExtra("Repaste", systemImage: "clipboard.on.clipboard") {
-            // 注册窗口动作桥：面板内容挂在 NSPanel 的 NSHostingView 上，
-            // 不在 SwiftUI Scene 环境内，无法直接使用 @Environment(\.openWindow)
-            let _ = AppWindowBridge.shared.register(openWindow)
-            // 首启引导：未完成首次引导时打开引导窗口（会话内幂等；
-            // 引导期间主功能照常——ClipboardMonitor 已在跑，第 3 步呼出面板正是要验证的）
-            let _ = OnboardingLauncher.launchIfNeeded()
-            // 录制开关：文案随状态切换
-            Button(recordingEnabled ? "暂停录制" : "开启录制") {
-                recordingEnabled.toggle()
-            }
-            Button("清空历史") {
-                // 清空历史（保留模板）
-                ClipboardStore.shared.clearHistory()
-            }
-            Button("设置…") {
-                // 走窗口桥统一入口：openSettings 内先激活 App 再开窗
-                // （菜单栏应用不抢前台，直接 openWindow 会被其他应用窗口挡住）
-                AppWindowBridge.shared.openSettings()
-            }
-            Divider()
-            Button("退出 Repaste") {
-                NSApplication.shared.terminate(nil)
-            }
+        // 菜单栏不驻留应用图标：设置 / 退出入口均在面板头部（PanelView 头部行），
+        // 设置与首启引导窗口由 AppWindowBridge 以 NSWindow 手动管理（与面板挂 NSPanel 同模式）；
+        // 这里仅保留空 Settings 场景满足 SwiftUI App 至少声明一个 Scene（不产生可见界面）
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.menu)
-
-        // 设置窗口（独立窗口：三分类「常规 / 呼出 / 历史与隐私」，改动即时生效）
-        Window("设置", id: "settings") {
-            SettingsView()
-        }
-        // 共享 ModelContainer（后续刘海面板用同一容器）
-        .modelContainer(ModelContainerProvider.shared)
-        .defaultSize(width: 720, height: 520)
-        // 打开时居中于屏幕
-        .defaultPosition(.center)
-
-        // 首次启动引导窗口（三步：欢迎 → 隐私 → 刘海呼出试用；完成 / 跳过后不再出现）
-        Window("欢迎使用 Repaste", id: "onboarding") {
-            OnboardingView()
-        }
-        .defaultSize(width: 560, height: 420)
-        // 居中展示
-        .defaultPosition(.center)
-        // 不可缩放（内容尺寸锁定）
-        .windowResizability(.contentSize)
     }
 }
 
-// MARK: - 窗口动作桥
+// MARK: - App 代理
 
-/// 跨层级窗口动作桥：面板内容挂在 NSPanel 的 NSHostingView 上，不在 SwiftUI Scene 环境内，
-/// 无法直接使用 @Environment(\.openWindow)；由 App 层在 MenuBarExtra 构建时注册动作供面板调用
+/// App 代理：启动完成后按需打开首启引导窗口（幂等；完成 / 跳过后不再出现）
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        OnboardingLauncher.launchIfNeeded()
+    }
+}
+
+// MARK: - 窗口管理桥
+
+/// 窗口管理桥：设置 / 首启引导窗口由此以 NSWindow + NSHostingView 手动管理
+/// （菜单栏不驻留图标、无 Scene 环境入口，面板内容挂 NSPanel 同理不依赖 openWindow）
+@MainActor
 final class AppWindowBridge {
     /// 单例
     static let shared = AppWindowBridge()
 
-    /// openWindow 环境动作（由 RepasteApp 的 MenuBarExtra 内容构建时注册）
-    private var openWindow: OpenWindowAction?
+    /// 设置窗口（懒创建；关闭仅移出屏，会话内复用）
+    private var settingsWindow: NSWindow?
+
+    /// 引导窗口（懒创建；完成 / 跳过后关闭）
+    private var onboardingWindow: NSWindow?
 
     private init() {}
 
-    /// 注册 openWindow 动作
-    func register(_ action: OpenWindowAction) {
-        openWindow = action
-    }
-
     /// 打开设置窗口
     func openSettings() {
-        // 菜单栏应用（LSUIElement）点击菜单项不激活 App：先激活再开窗，
-        // 否则设置窗口呈现在非激活应用层级，第一时间会被其他应用窗口挡住
-        // （与 OnboardingLauncher 同一处理）
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow?(id: "settings")
+        if settingsWindow == nil {
+            settingsWindow = Self.makeWindow(
+                title: "设置",
+                content: SettingsView(),
+                size: NSSize(width: 720, height: 520),
+                resizable: true
+            )
+        }
+        present(settingsWindow)
     }
 
-    /// 打开首启引导窗口
+    /// 打开首启引导窗口（无边框：无系统标题栏 / 边框 / 控制按钮，仅自绘引导卡）
     func openOnboarding() {
-        openWindow?(id: "onboarding")
+        if onboardingWindow == nil {
+            onboardingWindow = Self.makeBorderlessWindow(
+                content: OnboardingView(),
+                size: NSSize(width: 560, height: 420)
+            )
+        }
+        present(onboardingWindow)
     }
+
+    /// 关闭首启引导窗口（引导完成 / 跳过时由 OnboardingView 调用）
+    func closeOnboarding() {
+        onboardingWindow?.close()
+    }
+
+    /// 激活 App 并将窗口居中置前
+    /// （LSUIElement 应用点击不激活 App：先激活再开窗，否则会被其他应用窗口挡住）
+    private func present(_ window: NSWindow?) {
+        guard let window else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// 创建标准标题栏窗口（暗色外观随 App 哑光纯黑风格）；
+    /// isReleasedWhenClosed = false 使关闭仅移出屏（实例由桥持有，可复用）
+    private static func makeWindow(title: String, content: some View, size: NSSize, resizable: Bool) -> NSWindow {
+        var style: NSWindow.StyleMask = [.titled, .closable]
+        if resizable {
+            style.insert(.resizable)
+            style.insert(.miniaturizable)
+        }
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: style,
+            backing: .buffered,
+            defer: false
+        )
+        window.title = title
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .vibrantDark)
+        // 标题栏透明 + 窗口底色 = DT.panel（#0A0A0A），
+        // 使顶部标题栏横条与内容区背景色一致（哑光纯黑，无系统浅灰标题栏）
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(red: 10 / 255, green: 10 / 255, blue: 10 / 255, alpha: 1)
+        window.contentView = NSHostingView(rootView: content)
+        return window
+    }
+
+    /// 创建无边框窗口（引导弹框用）：无系统标题栏 / 边框 / 控制按钮，
+    /// 透明底仅承载自绘界面，窗口阴影随引导卡轮廓自然投射；
+    /// .borderless 默认 canBecomeKey = false（esc 跳过快捷键会失效），用子类覆写恢复
+    private static func makeBorderlessWindow(content: some View, size: NSSize) -> NSWindow {
+        let window = BorderlessKeyWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = true
+        window.isMovableByWindowBackground = true
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .vibrantDark)
+        window.contentView = NSHostingView(rootView: content)
+        return window
+    }
+}
+
+// MARK: - 无边框窗口子类
+
+/// 无边框窗口：覆写 canBecomeKey / canBecomeMain，
+/// 使 .borderless 窗口可接收键盘事件（引导卡的 esc 跳过快捷键依赖 key window）
+private final class BorderlessKeyWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }

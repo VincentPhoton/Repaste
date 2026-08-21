@@ -47,8 +47,11 @@ enum DT {
     static let link = Color(red: 79 / 255, green: 212 / 255, blue: 127 / 255)
     /// 类型色：文件 #FFA856
     static let file = Color(red: 255 / 255, green: 168 / 255, blue: 86 / 255)
-    /// 类型色：未知 #FFB454
-    static let unknown = Color(red: 255 / 255, green: 180 / 255, blue: 84 / 255)
+
+    /// 警示色 #FFB454（暂停提示条 / 原图已清理等警告场景；不再兼任类型色）
+    static let warn = Color(red: 255 / 255, green: 180 / 255, blue: 84 / 255)
+    /// 成功色 #4FD47F（成功 ✓ 反馈；与链接类型色同值、语义独立）
+    static let success = Color(red: 79 / 255, green: 212 / 255, blue: 127 / 255)
 
     /// 危险色（删除等破坏性动作文字）#FF9089
     static let danger = Color(red: 255 / 255, green: 144 / 255, blue: 137 / 255)
@@ -179,8 +182,27 @@ struct SolidButton: View {
                         .fill(DT.button)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
+}
+
+// MARK: - 哑光按压样式
+
+/// 哑光按压样式：plain 行为 + 按下时透明度反馈（无高光 / 无发光 / 无缩放）
+struct MattePressStyle: ButtonStyle {
+    /// 按下时降到 0.55 透明度（哑光质感的「压下去」感）
+    private static let pressedOpacity: Double = 0.55
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? Self.pressedOpacity : 1)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == MattePressStyle {
+    /// 哑光按压样式（.mattePress）：等价 .plain 外观 + 按压透明度反馈
+    static var mattePress: MattePressStyle { .init() }
 }
 
 // MARK: - 面板背景修饰

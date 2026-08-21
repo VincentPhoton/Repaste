@@ -115,7 +115,7 @@ struct ClipMoreMenu: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onHover { hovering in
             // 仅 hover 高亮，无需动画（哑光即时反馈）
             hoveredAction = hovering ? action : nil

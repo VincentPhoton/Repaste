@@ -227,7 +227,7 @@ struct SettingsView: View {
             .background(Capsule().fill(isSelected ? Color.white : Color.clear))
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 
     // MARK: 右侧内容区
@@ -463,7 +463,7 @@ struct PasteTargetRow: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 }
 
@@ -645,7 +645,7 @@ struct PrivacyCard: View {
                             Capsule().strokeBorder(DT.stroke, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.mattePress)
                 }
             }
         }
@@ -733,7 +733,7 @@ struct IgnoredAppChip: View {
                     .frame(width: 14, height: 14)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.mattePress)
             .onHover { hoveringRemove = $0 }
         }
         .padding(.horizontal, 10)
@@ -886,7 +886,7 @@ struct MatteToggle: View {
             .overlay(Capsule().strokeBorder(DT.stroke, lineWidth: 1))
             .animation(.easeInOut(duration: 0.14), value: isOn)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 }
 
@@ -955,7 +955,7 @@ struct ShortcutCaptureButton: View {
                         .strokeBorder(isCapturing ? DT.accent.opacity(0.6) : DT.stroke, lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onChange(of: isCapturing) { _, active in
             if active {
                 startCapturing()
@@ -1029,7 +1029,7 @@ struct DangerButton: View {
                         .strokeBorder(DT.danger.opacity(0.55), lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 }
 
@@ -1120,7 +1120,7 @@ struct SettingsPicker: View {
             .frame(width: width, height: Self.buttonHeight)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .background(
             RoundedRectangle(cornerRadius: DT.innerCardRadius, style: .continuous).fill(DT.button)
         )
@@ -1189,7 +1189,7 @@ struct SettingsPicker: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onHover { hovering in
             hoveredId = hovering ? option.id : nil
         }

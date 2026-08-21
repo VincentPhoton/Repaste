@@ -48,6 +48,31 @@ private enum PanelMotion {
 /// 重写 canBecomeKey 使面板可接收键盘事件（nonactivating，不激活 App）
 private final class RepastePanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    /// 窗口级事件入口：mouseDown 到达即记录投递日志（含浮层状态与命中测试结果）
+    /// （与 item_used 构成「投递 → 动作」漏斗：死态时若投递日志仍在而动作缺失，
+    /// 看 ovl 字段即知是哪个浮层在拦截；hit 字段直接给出命中视图类型，nil = 命中失败）
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            let hit: String
+            if let contentView {
+                let point = contentView.convert(event.locationInWindow, from: nil)
+                hit = contentView.hitTest(point).map { String(describing: Swift.type(of: $0)) } ?? "nil"
+            } else {
+                hit = "no-content"
+            }
+            EventLog.track(EventLog.panelMouseDelivered, [
+                "alpha": String(format: "%.2f", alphaValue),
+                "ovl": PanelController.shared.viewModel.overlayStateFlags,
+                "hit": hit,
+                // 几何探针：contentView 在窗口坐标系中的 frame（应为 0,0,W,H 铺满窗口）。
+                // 若与窗口尺寸不符 = 承载视图布局错位（可见内容与命中区域分离）
+                "cv": contentView.map { "\(Int($0.frame.width))x\(Int($0.frame.height))@\(Int($0.frame.minY))" } ?? "none",
+                "wh": String(Int(frame.height)),
+            ])
+        }
+        super.sendEvent(event)
+    }
 }
 
 // MARK: - 面板控制器
@@ -65,8 +90,8 @@ final class PanelController {
     /// 承载 SwiftUI 内容的面板
     private let panel: RepastePanel
 
-    /// SwiftUI 承载视图（用于计算内容自适应高度）
-    private let hostingView: NSHostingView<PanelView>
+    /// SwiftUI 承载视图（用于计算内容自适应高度；死态自愈时整体重建，故为 var）
+    private var hostingView: NSHostingView<PanelView>
 
     /// 当前展示模式（尺寸锚定计算用）
     private var currentMode: PanelMode = .notch
@@ -152,6 +177,10 @@ final class PanelController {
             // 单纯 orderFrontRegardless 只调层级、不重建事件挂载，必须 orderOut + orderFront
             // 强制重建；同 runloop 内无可见闪烁
             forceRemount()
+            // 恢复路径同样重建 SwiftUI 树：手势图坏态若只靠「重新呼出」无法消除
+            // （面板未真正收起时用户反复呼出都走本路径），死态会跨多次呼出存活——
+            // 实测日志中出现过连续 3 次 panel_open 无效、第 4 次才恢复的序列
+            rebuildContentView()
             let generation = showGeneration
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = PanelMotion.recoverDuration
@@ -182,6 +211,11 @@ final class PanelController {
 
         // 幽灵态防御：面板本应不可见却仍挂载（alpha 残留在低值的罕见态），先彻底移出保证干净入场
         if panel.isVisible { panel.orderOut(nil) }
+        // 治愈性重置：整体重建 SwiftUI 树。hostingView 若全程常驻复用，「收起动画期间
+        // 点击被打断」等序列会让 SwiftUI 手势图残留悬挂的按下/追踪态——之后所有点击
+        // 进入窗口却不再触发任何按钮（跨面板重开永久存在，orderOut/orderFront 无法恢复）。
+        // 视图 @State 均为轻量展示态（数据在 viewModel），重建无感且能清除一切累积坏态
+        rebuildContentView()
         panel.setFrame(startFrame, display: false)
         panel.alphaValue = 0
         // orderFrontRegardless 不激活 App；成为 key window（nonactivating 不激活 App）确保键盘事件到达
@@ -242,9 +276,9 @@ final class PanelController {
                 self.panel.orderOut(nil)
             } else if self.panel.isVisible {
                 // 防御：渐隐动画被同名动画叠加后 alpha 的 model value 可能冻结在中间值
-                // （deferredHideTask 与离开收起检测并发触发两次 hide 时），
-                // 无新展示代次时面板必须彻底移出——半透明残影挂在屏上会让后续
-                // show() 误走「恢复路径」跳过事件挂载重建，形成可见但不可点击的死态
+                // （多处并发触发两次 hide 时），无新展示代次时面板必须彻底移出——
+                // 半透明残影挂在屏上会让后续 show() 误走「恢复路径」跳过事件挂载重建，
+                // 形成可见但不可点击的死态
                 self.panel.alphaValue = 0
                 self.panel.orderOut(nil)
             }
@@ -253,9 +287,9 @@ final class PanelController {
 
     // MARK: 尺寸与位置
 
-    /// 面板高度上限：内容自适应，最大约 400，且不超屏幕可用高度 - 120
+    /// 面板高度上限：内容自适应，最大约 450，且不超屏幕可用高度 - 120
     private func maxHeight(for screen: NSScreen) -> CGFloat {
-        max(220, min(400, screen.visibleFrame.height - 120))
+        max(220, min(450, screen.visibleFrame.height - 120))
     }
 
     /// 计算面板目标 frame（宽度固定 500，高度内容自适应；notch 顶部居中贴合屏幕顶 / centered 屏幕居中）
@@ -298,6 +332,19 @@ final class PanelController {
         } else {
             panel.setFrame(newFrame, display: false)
         }
+    }
+
+    // MARK: 内容视图重建
+
+    /// 重建面板内容视图（SwiftUI 树全量重置；viewModel 为唯一数据源，跨重建保留）
+    private func rebuildContentView() {
+        let hosting = NSHostingView(rootView: PanelView(viewModel: viewModel))
+        // 显式继承旧视图布局：赋 contentView 时 AppKit 通常会接管 frame，
+        // 但窗口此刻的 content 布局可能与旧视图 frame 有偏差，显式设置兜底
+        hosting.frame = hostingView.frame
+        hosting.autoresizingMask = [.width, .height]
+        panel.contentView = hosting
+        hostingView = hosting
     }
 
     // MARK: 悬停收起支持（HotZoneWatcher / CapsuleController / HotKeyManager 使用）

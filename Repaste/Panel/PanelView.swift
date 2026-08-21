@@ -21,8 +21,11 @@ struct PanelView: View {
     /// 搜索框聚焦
     @FocusState private var searchFocused: Bool
 
+    /// 减弱动态效果（Reduce Motion）：浮层动效退化为纯淡入淡出
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// 面板当前高度（onGeometryChange 持续更新；菜单上下翻转与预览图片高度约束用）
-    @State private var panelHeight: CGFloat = 500
+    @State private var panelHeight: CGFloat = 450
 
     /// 来源条横向滚动位置（右侧箭头点击滚动用）
     @State private var sourceScrollPos = ScrollPosition(edge: .leading)
@@ -33,10 +36,45 @@ struct PanelView: View {
     /// 标签页行滚动状态
     @State private var tabScrollState = HScrollState()
 
-    /// 列表区最大高度（固定区约 90~125 + 列表 310 ≈ 面板最大 400，受 PanelController 上限约束）
-    private static let listMaxHeight: CGFloat = 310
+    /// 列表区最大高度（固定区约 90~125 + 列表 360 ≈ 面板最大 450，受 PanelController 上限约束）
+    private static let listMaxHeight: CGFloat = 360
     /// 列表区最小高度（内容少时保底，避免面板过扁）
     private static let listMinHeight: CGFloat = 180
+
+    // MARK: 浮层动效（菜单 / 弹窗 / 预览；Reduce Motion 退化为纯淡入淡出）
+
+    /// 菜单弹出动画（snappy 轻弹；reduce motion 快速淡入淡出）
+    private var menuAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.1) : .snappy(duration: 0.18, extraBounce: 0.08)
+    }
+
+    /// 菜单弹出 transition：自锚点角（右上）缩放浮现
+    private var menuTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.95, anchor: .topTrailing))
+    }
+
+    /// 弹窗动画
+    private var dialogAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.1) : .snappy(duration: 0.22, extraBounce: 0.1)
+    }
+
+    /// 弹窗卡片 transition：居中缩放浮现
+    private var dialogTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.96))
+    }
+
+    /// 图片预览动画
+    private var previewAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.1) : .snappy(duration: 0.2, extraBounce: 0.06)
+    }
+
+    /// 图片预览 transition：轻微缩放浮现
+    private var previewTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.97))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,35 +91,43 @@ struct PanelView: View {
         .frame(width: DT.panelWidth)
         .coordinateSpace(name: Self.coordinateSpaceName)
         .panelShapeBackground(isNotch: viewModel.isNotchMode)
-        // ⋮ 更多菜单浮层（zIndex 低于图片预览与 toast；点菜单外任意处关闭）
+        // ⋮ 更多菜单浮层（zIndex 低于图片预览与 toast；点菜单外任意处关闭）。
+        // .id(overlayTeardownToken)：浮层归空 0.7s 后代次递增强制拆除浮层子树——
+        // 移除 transition 偶发卡住时视图残留（不可见但吞点击），身份重建保证彻底移除
         .overlay(alignment: .topLeading) {
             moreMenuOverlay
-                .animation(.easeOut(duration: 0.12), value: viewModel.moreMenuClip == nil)
+                .animation(menuAnimation, value: viewModel.moreMenuClip == nil)
+                .id(viewModel.overlayTeardownToken)
         }
         // 模板行 ⋮ 菜单浮层（同历史菜单，点菜单外任意处关闭）
         .overlay(alignment: .topLeading) {
             templateMenuOverlay
-                .animation(.easeOut(duration: 0.12), value: viewModel.templateMenuClip == nil)
+                .animation(menuAnimation, value: viewModel.templateMenuClip == nil)
+                .id(viewModel.overlayTeardownToken)
         }
         // 浏览器选择浮层（⌥ 点「打开链接」触发，点浮层外任意处关闭）
         .overlay(alignment: .topLeading) {
             browserChooserOverlay
-                .animation(.easeOut(duration: 0.12), value: viewModel.browserChooserClip == nil)
+                .animation(menuAnimation, value: viewModel.browserChooserClip == nil)
+                .id(viewModel.overlayTeardownToken)
         }
         // 图片放大查看浮层（遮罩盖住整个面板，zIndex 高于列表与菜单）
         .overlay {
             previewOverlay
-                .animation(.easeOut(duration: 0.15), value: viewModel.previewingClip == nil)
+                .animation(previewAnimation, value: viewModel.previewingClip == nil)
+                .id(viewModel.overlayTeardownToken)
         }
         // 弹窗浮层（面板内居中：半透明遮罩 + 圆角卡片；zIndex 高于菜单与预览）
         .overlay {
             dialogOverlay
-                .animation(.easeOut(duration: 0.15), value: viewModel.activeDialog == nil)
+                .animation(dialogAnimation, value: viewModel.activeDialog == nil)
+                .id(viewModel.overlayTeardownToken)
         }
         // toast 轻提示（面板顶部浮现，最上层）
         .overlay(alignment: .top) {
             toastOverlay
                 .animation(.easeOut(duration: 0.22), value: viewModel.toast)
+                .id(viewModel.overlayTeardownToken)
         }
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
@@ -92,6 +138,21 @@ struct PanelView: View {
         .onChange(of: viewModel.searchFocusRequest) { _, _ in
             searchFocused = true
         }
+        .onChange(of: viewModel.overlayStateFlags) { oldValue, newValue in
+            // 浮层状态迁移全记录（开与关）：与点击投递日志对齐时间线，
+            // 定位「点击无动作」时是哪个浮层状态在拦截
+            EventLog.track(EventLog.panelOverlayChanged, ["from": oldValue, "to": newValue])
+            // 浮层全部归空后调度强制拆除：清除移除 transition 偶发卡住的残留视图
+            if newValue.isEmpty {
+                viewModel.scheduleOverlayTeardown()
+            }
+        }
+        // 诊断探针：SwiftUI 手势层活性检测（任何点击都应触发）。
+        // 与 panel_mouse_delivered 构成三层漏斗：死态时 mouse_delivered 有而本事件无
+        // = 手势路由层卡死；两者都有但无动作 = 命中区域错位或残留遮罩拦截
+        .simultaneousGesture(TapGesture().onEnded {
+            EventLog.track(EventLog.panelSwiftUITap, ["ovl": viewModel.overlayStateFlags])
+        })
         .onChange(of: viewModel.activeDialog) { _, newValue in
             // 弹窗关闭后焦点回到搜索框（键盘导航不中断）
             if newValue == nil { searchFocused = true }
@@ -121,7 +182,7 @@ struct PanelView: View {
         .padding(.bottom, 8)
     }
 
-    /// 搜索框（InnerCard 样式、圆角 12、高 34、聚焦即筛）
+    /// 搜索框（InnerCard 样式、圆角 12、高 34、聚焦即筛；非空时尾随清空按钮）
     private var searchField: some View {
         @Bindable var model = viewModel
 
@@ -136,10 +197,30 @@ struct PanelView: View {
                     .foregroundStyle(DT.fg)
                     .focused($searchFocused)
                     .onSubmit { model.useSelected() }
+                if !model.searchText.isEmpty {
+                    clearSearchButton
+                }
             }
             .padding(.horizontal, 11)
             .frame(height: 34)
         }
+    }
+
+    /// 清空搜索按钮（xmark 小圆钮；清空后焦点回到搜索框，连续输入不中断）
+    private var clearSearchButton: some View {
+        Button {
+            viewModel.searchText = ""
+            searchFocused = true
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DT.muted)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(DT.surface3))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.mattePress)
+        .help("清空搜索")
     }
 
     /// 28×28 图标按钮（button 实底、8 圆角）
@@ -154,7 +235,7 @@ struct PanelView: View {
                         .fill(DT.button)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .help(help)
     }
 
@@ -200,7 +281,7 @@ struct PanelView: View {
                     } label: {
                         PillChip(title: item.title, isSelected: viewModel.selectedTab == item.tab)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.mattePress)
                 }
                 // 新建模板组入口（＋ 弹窗：只问名称，创建即新增 tab 并切换）
                 Button {
@@ -212,7 +293,7 @@ struct PanelView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.mattePress)
                 .help("新建模板组")
             }
             .padding(.horizontal, 14)
@@ -301,7 +382,7 @@ struct PanelView: View {
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(DT.button))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .help(help)
     }
 
@@ -343,29 +424,48 @@ struct PanelView: View {
                 Capsule().fill(isSelected ? Color.white : DT.surface3)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 
     // MARK: 录制暂停提示条
 
-    /// 「录制已暂停」提示条（recordingEnabled == false 时显示，黄色 warn 色小字条）
+    /// 「剪贴板记录已暂停」提示条（recordingEnabled == false 时显示，黄色 warn 色小字条 + 右侧「恢复」按钮：
+    /// 在发现问题的地方顺手解决问题，不必绕道菜单栏/设置）
     private var pausedBanner: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(DT.unknown)
+                .fill(DT.warn)
                 .frame(width: 7, height: 7)
-            Text("录制已暂停，新复制的内容不会进入历史")
+            Text("剪贴板记录已暂停，新复制的内容不会进入历史")
                 .font(.system(size: 12))
-                .foregroundStyle(DT.unknown)
+                .foregroundStyle(DT.warn)
+            Spacer(minLength: 0)
+            resumeButton
         }
         .padding(.horizontal, 11)
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DT.unknown.opacity(0.16))
+                .fill(DT.warn.opacity(0.16))
         )
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+    }
+
+    /// 「恢复」按钮（白底黑字小胶囊，与选中态 chip 同语言）
+    private var resumeButton: some View {
+        Button {
+            viewModel.resumeRecording()
+        } label: {
+            Text("恢复")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(DT.panel)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.white))
+        }
+        .buttonStyle(.mattePress)
+        .help("恢复剪贴板记录")
     }
 
     // MARK: 列表区
@@ -424,6 +524,7 @@ struct PanelView: View {
                         TemplateRow(
                             clip: clip,
                             isSelected: viewModel.selectionIndex == index,
+                            searchText: viewModel.searchText,
                             onUse: {
                                 viewModel.selectionIndex = index
                                 viewModel.use(clip: clip)
@@ -504,9 +605,13 @@ struct PanelView: View {
                         ClipRow(
                             clip: clip,
                             isSelected: viewModel.selectionIndex == index,
+                            searchText: viewModel.searchText,
                             onUse: {
                                 viewModel.selectionIndex = index
                                 viewModel.use(clip: clip)
+                            },
+                            onOpenPreview: {
+                                viewModel.openPreview(clip: clip)
                             },
                             onSourceTap: { viewModel.selectSource($0) },
                             onOpenLink: {
@@ -520,6 +625,8 @@ struct PanelView: View {
                             }
                         )
                         .id(clip.id)
+                        // 新条目实时滑入（复制新内容 → 面板可见时从顶部滑入；删除时淡出）
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
                 .padding(.horizontal, 14)
@@ -562,10 +669,11 @@ struct PanelView: View {
     private var moreMenuOverlay: some View {
         ZStack(alignment: .topLeading) {
             if viewModel.moreMenuClip != nil {
-                // 点击层：拦截面板内所有点击（含列表滚动），点任意处关闭菜单
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.closeMoreMenu() }
+                // 点击层：拦截面板内所有点击（含列表滚动），点任意处关闭菜单。
+                // 用 Button(.plain) 而非 onTapGesture：裸手势在 NSHostingView 上与
+                // 浮层移除 transition 存在竞态（mouseUp 与视图移除竞争），偶发手势图
+                // 卡死后吞掉面板内所有后续点击；Button 走 AppKit 完整点击语义更稳
+                dismissLayer { viewModel.closeMoreMenu() }
             }
             if let clip = viewModel.moreMenuClip {
                 let position = menuPosition(
@@ -578,6 +686,7 @@ struct PanelView: View {
                     handleMenuAction(action, for: clip)
                 }
                 .offset(x: position.x, y: position.y)
+                .transition(menuTransition)
             }
         }
     }
@@ -588,9 +697,7 @@ struct PanelView: View {
     private var templateMenuOverlay: some View {
         ZStack(alignment: .topLeading) {
             if viewModel.templateMenuClip != nil {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.closeTemplateMenu() }
+                dismissLayer { viewModel.closeTemplateMenu() }
             }
             if let clip = viewModel.templateMenuClip {
                 TemplateRowMenu(clip: clip) { action in
@@ -601,6 +708,7 @@ struct PanelView: View {
                     x: templateMenuPosition.x,
                     y: templateMenuPosition.y
                 )
+                .transition(menuTransition)
             }
         }
     }
@@ -622,9 +730,7 @@ struct PanelView: View {
     private var browserChooserOverlay: some View {
         ZStack(alignment: .topLeading) {
             if viewModel.browserChooserClip != nil {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.closeBrowserChooser() }
+                dismissLayer { viewModel.closeBrowserChooser() }
             }
             if let clip = viewModel.browserChooserClip {
                 let options = BrowserChooserMenu.options()
@@ -638,6 +744,7 @@ struct PanelView: View {
                     viewModel.openLink(clip: clip, browserBundleId: bundleId, kind: "menu")
                 }
                 .offset(x: position.x, y: position.y)
+                .transition(menuTransition)
             }
         }
     }
@@ -687,15 +794,24 @@ struct PanelView: View {
 
     // MARK: 弹窗浮层
 
+    /// 浮层关闭点击层（全尺寸透明 Button）：所有「点遮罩关闭」统一入口。
+    /// 见 moreMenuOverlay 注释——Button 替代 onTapGesture 防手势竞态
+    private func dismissLayer(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Color.clear.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     /// 弹窗浮层：半透明遮罩（点击取消）+ 居中圆角卡片
     @ViewBuilder
     private var dialogOverlay: some View {
         if let dialog = viewModel.activeDialog {
             ZStack {
                 Color.black.opacity(0.5)
-                    .contentShape(Rectangle())
-                    .onTapGesture { viewModel.cancelDialog() }
+                dismissLayer { viewModel.cancelDialog() }
                 dialogCard(for: dialog)
+                    .transition(dialogTransition)
             }
             .transition(.opacity)
         }
@@ -712,6 +828,9 @@ struct PanelView: View {
         case .saveToGroup(let clipId):
             if let clip = viewModel.clips.first(where: { $0.id == clipId }) {
                 SaveToGroupDialogContent(viewModel: viewModel, clip: clip)
+            } else {
+                // 条目已不存在（如待删除提交后）：只剩遮罩无卡片会呈现「面板死态」，自动关闭
+                Color.clear.onAppear { viewModel.cancelDialog() }
             }
         case .renameGroup(let groupId):
             RenameGroupDialogContent(viewModel: viewModel, groupId: groupId)
@@ -734,6 +853,7 @@ struct PanelView: View {
                 onClose: { viewModel.closePreview() },
                 onCopyImage: { viewModel.copyPreviewImage(clip: clip) }
             )
+            .transition(previewTransition)
         }
     }
 
@@ -745,14 +865,14 @@ struct PanelView: View {
 
     // MARK: toast 轻提示
 
-    /// toast 浮层：面板顶部居中，紫色 ✓ + 主标题 + 副标题，紫边辉光黑底
+    /// toast 浮层：面板顶部居中，紫色 ✓ + 主标题 + 副标题 + 可选动作按钮（如删除后「撤销」），紫边辉光黑底
     @ViewBuilder
     private var toastOverlay: some View {
         if let toast = viewModel.toast {
             HStack(spacing: 6) {
                 Text("✓")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DT.accentBright)
+                    .foregroundStyle(DT.success)
                 Text(toast.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(DT.fgStrong)
@@ -764,6 +884,20 @@ struct PanelView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(DT.muted)
                         .lineLimit(1)
+                }
+                if let actionTitle = toast.actionTitle, let action = toast.action {
+                    Button {
+                        action()
+                    } label: {
+                        Text(actionTitle)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(DT.accentBright)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(DT.accent.opacity(0.18)))
+                    }
+                    .buttonStyle(.mattePress)
+                    .help(actionTitle)
                 }
             }
             .padding(.horizontal, 16)
@@ -865,7 +999,7 @@ private struct SmallTextButton: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(isHovering ? DT.fg : DT.muted)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onHover { isHovering = $0 }
     }
 }

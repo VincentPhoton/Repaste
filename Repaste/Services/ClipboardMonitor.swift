@@ -258,6 +258,7 @@ final class ClipboardMonitor: NSObject {
             ) {
                 ClipboardStore.shared.touch(clip: duplicate)
                 EventLog.track(EventLog.clipCaptured, ["kind": duplicate.kind, "dedup": "true"])
+                NotificationCenter.default.post(name: .clipboardHistoryDidUpdate, object: nil)
                 return
             }
             // 落盘（原图 + 40×40 缩略图），payloadRef 记原图文件名
@@ -297,6 +298,7 @@ final class ClipboardMonitor: NSObject {
            latest.payloadRef == clip.payloadRef {
             ClipboardStore.shared.touch(clip: latest)
             EventLog.track(EventLog.clipCaptured, ["kind": clip.kind, "dedup": "true"])
+            NotificationCenter.default.post(name: .clipboardHistoryDidUpdate, object: nil)
             return
         }
 
@@ -309,6 +311,8 @@ final class ClipboardMonitor: NSObject {
             "source": source?.bundleId ?? "unknown",
             "bytes": String(clip.byteSize),
         ])
+        // 广播历史变化（面板可见时实时刷新列表；轮询在主线程，通知同步送达）
+        NotificationCenter.default.post(name: .clipboardHistoryDidUpdate, object: nil)
     }
 
     /// 图片内容级去重：最新历史条目为图片且数据逐字节一致时返回该条目
@@ -332,4 +336,11 @@ final class ClipboardMonitor: NSObject {
     private func purgeImageTTL() {
         ImageStore.shared.purgeExpired(ttlDays: SettingsStore.shared.imageTtlDays)
     }
+}
+
+// MARK: - 历史变化广播
+
+extension Notification.Name {
+    /// 剪贴板历史有新条目入库或置顶刷新（面板可见时实时刷新列表用）
+    static let clipboardHistoryDidUpdate = Notification.Name("Repaste.clipboardHistoryDidUpdate")
 }

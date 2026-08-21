@@ -27,6 +27,8 @@ struct TemplateRow: View {
     let clip: Clip
     /// 是否键盘选中（surface3 高亮）
     let isSelected: Bool
+    /// 搜索关键词（命中片段高亮）
+    let searchText: String
     /// 使用模板（点击整行）
     let onUse: () -> Void
     /// ⋮ 菜单（参数 = 按钮在面板坐标系中的锚点 frame，供菜单弹出定位）
@@ -39,8 +41,8 @@ struct TemplateRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // 内容两行截断（模板都是静态文本，无类型标签列）
-            Text(clip.preview)
+            // 内容两行截断（模板都是静态文本，无类型标签列；搜索命中段高亮）
+            SearchHighlight.text(clip.preview, keyword: searchText)
                 .font(.system(size: 13))
                 .foregroundStyle(DT.fg)
                 .lineLimit(2)
@@ -70,23 +72,22 @@ struct TemplateRow: View {
 
     // MARK: 右侧操作按钮
 
-    /// ⋮ 按钮（28×28、button 底；点击弹出模板菜单，携带按钮锚点 frame）
+    /// ⋮ 按钮（28×28、button 底；与 ClipRow 同款 ellipsis 图标——旋转 90° 竖排三点，点击弹出模板菜单，携带按钮锚点 frame）
     private var moreButton: some View {
         Button {
             onMore(moreButtonFrame)
         } label: {
-            VStack(spacing: 3.5) {
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-                Circle().fill(DT.muted).frame(width: 4.5, height: 4.5)
-            }
-            .frame(width: 28, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(DT.button)
-            )
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DT.fg)
+                .rotationEffect(.degrees(90))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(DT.button)
+                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         // 持续跟踪按钮在面板坐标系中的 frame（列表滚动时同步更新，供菜单弹出定位）
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(PanelView.coordinateSpaceName))
@@ -171,7 +172,7 @@ struct TemplateRowMenu: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onHover { hovering in
             // 仅 hover 高亮，无需动画（哑光即时反馈）
             hoveredAction = hovering ? action : nil

@@ -35,15 +35,48 @@ enum RelativeTime {
     }
 }
 
+// MARK: - 搜索命中高亮
+
+/// 搜索命中高亮：文本中命中关键词的片段染成 accentBright（大小写 / 音调不敏感）；
+/// 关键词为空或未命中返回普通 Text（基础样式完全交给调用方视图修饰）
+enum SearchHighlight {
+    static func text(_ text: String, keyword: String) -> Text {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Text(text) }
+
+        // 逐段切分：未命中段不带属性（继承视图修饰），命中段显式 accentBright
+        var result = AttributedString()
+        var remaining = Substring(text)
+        var found = false
+        while let range = remaining.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) {
+            found = true
+            if range.lowerBound > remaining.startIndex {
+                result += AttributedString(String(remaining[remaining.startIndex..<range.lowerBound]))
+            }
+            var hit = AttributedString(String(remaining[range]))
+            hit.foregroundColor = DT.accentBright
+            result += hit
+            remaining = remaining[range.upperBound...]
+        }
+        guard found else { return Text(text) }
+        result += AttributedString(String(remaining))
+        return Text(result)
+    }
+}
+
 // MARK: - 单行卡片
 
-/// 单行卡片（三类形态：文本 / 图片 / 链接；整行点击 = 使用）
+/// 单行卡片（三类形态：文本 / 图片 / 链接；整行点击 = 使用；图片缩略图点击 = 放大查看）
 struct ClipRow: View {
     let clip: Clip
     /// 是否键盘选中（surface3 高亮）
     let isSelected: Bool
+    /// 搜索关键词（命中片段高亮）
+    let searchText: String
     /// 使用条目（点击整行）
     let onUse: () -> Void
+    /// 放大查看图片（点击缩略图；仅图片卡）
+    let onOpenPreview: () -> Void
     /// 点击行内来源标签（key = bundleId 或 "unknown"，等同来源条筛选）
     let onSourceTap: (String) -> Void
     /// 打开链接（链接 / 文本卡统一的「打开链接」按钮普通点击；默认浏览器打开）
@@ -59,6 +92,8 @@ struct ClipRow: View {
     @State private var isSourceHovering = false
     /// 「打开链接」次级按钮 hover 状态
     @State private var isLinkHovering = false
+    /// 图片缩略图 hover 状态（显示放大角标）
+    @State private var isThumbHovering = false
     /// 来源图标（onAppear 加载一次，避免重复读盘）
     @State private var sourceIcon: NSImage?
     /// 图片缩略图（onAppear 加载一次）
@@ -77,11 +112,11 @@ struct ClipRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // 置顶标记
+            // 置顶标记（中性 muted：状态标记，不占用警示橙与类型色语义）
             if clip.pinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(DT.unknown)
+                    .foregroundStyle(DT.muted)
                     .padding(.top, 4)
             }
 
@@ -135,7 +170,7 @@ struct ClipRow: View {
         case .image:
             // 图片卡：preview（文件名）fgStrong + 元信息（来源 + 时间 + 「1280×800 · PNG」）
             VStack(alignment: .leading, spacing: 5) {
-                Text(clip.preview)
+                SearchHighlight.text(clip.preview, keyword: searchText)
                     .font(.system(size: 13))
                     .foregroundStyle(DT.fgStrong)
                     .lineLimit(1)
@@ -148,7 +183,7 @@ struct ClipRow: View {
                     Image(systemName: "link")
                         .font(.system(size: 11))
                         .foregroundStyle(DT.link)
-                    Text(hostText)
+                    SearchHighlight.text(hostText, keyword: searchText)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(DT.fgStrong)
                         .lineLimit(1)
@@ -159,7 +194,7 @@ struct ClipRow: View {
         case .text, .file:
             // 文本卡：preview 两行截断 fg 色 + 元信息（来源 + 时间 + 字数 + 富文本标记 + 可选「打开链接」）
             VStack(alignment: .leading, spacing: 5) {
-                Text(clip.preview)
+                SearchHighlight.text(clip.preview, keyword: searchText)
                     .font(.system(size: 13))
                     .foregroundStyle(DT.fg)
                     .lineLimit(2)
@@ -257,7 +292,8 @@ struct ClipRow: View {
 
     // MARK: 图片缩略图
 
-    /// 40×40 缩略图（优先缩略图，缺失回退原图；再缺失显示占位块）
+    /// 40×40 缩略图（优先缩略图，缺失回退原图；再缺失显示占位块）：
+    /// 点击直接放大查看（行点击仍是「使用」，两个意图分开）；hover 显示放大角标
     private var thumbnailView: some View {
         Group {
             if let thumbnail {
@@ -270,6 +306,22 @@ struct ClipRow: View {
         }
         .frame(width: 40, height: 40)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        // 内层手势优先于整行 onTapGesture
+        .onTapGesture(perform: onOpenPreview)
+        .onHover { isThumbHovering = $0 }
+        .help("点击查看大图")
+        .overlay(alignment: .bottomTrailing) {
+            if isThumbHovering {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(.black.opacity(0.6)))
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: isThumbHovering)
     }
 
     // MARK: 链接卡专属
@@ -311,7 +363,7 @@ struct ClipRow: View {
                     .fill(DT.button)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         // 持续跟踪按钮在面板坐标系中的 frame（列表滚动时同步更新，供菜单弹出定位）
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(PanelView.coordinateSpaceName))

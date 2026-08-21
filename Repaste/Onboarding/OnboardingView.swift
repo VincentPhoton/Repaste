@@ -39,6 +39,12 @@ struct OnboardingView: View {
     /// 当前步号（1…3）
     @State private var step = 1
 
+    /// 步骤切换方向（1 = 前进，-1 = 返回；决定滑入滑出方向）
+    @State private var stepDirection = 1
+
+    /// 减弱动态效果（Reduce Motion）：步骤切换退化为纯淡入淡出
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// 第 3 步：是否已成功呼出面板（刘海悬停 / ⌥⇧V 均可）
     @State private var summoned = false
 
@@ -122,13 +128,27 @@ struct OnboardingView: View {
 
     // MARK: 步骤内容
 
-    @ViewBuilder
     private var stepContent: some View {
-        switch step {
-        case 1: welcomeStep
-        case 2: privacyStep
-        default: tryStep
+        Group {
+            switch step {
+            case 1: welcomeStep
+            case 2: privacyStep
+            default: tryStep
+            }
         }
+        // id 随步号变化，步骤切换必触发插入/移除 transition
+        .id(step)
+        .transition(stepTransition)
+    }
+
+    /// 步骤切换 transition：前进自右滑入、返回自左滑入（reduce motion 纯淡入淡出）
+    private var stepTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        let offset: CGFloat = stepDirection >= 0 ? 28 : -28
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: offset)),
+            removal: .opacity.combined(with: .offset(x: -offset))
+        )
     }
 
     /// 第 1 步：欢迎 + 呼出方式说明 + 默认 Tab 单选
@@ -166,7 +186,7 @@ struct OnboardingView: View {
                             } label: {
                                 PillChip(title: option.title, isSelected: settings.defaultTab == option.rawValue)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.mattePress)
                         }
                     }
                 }
@@ -236,10 +256,16 @@ struct OnboardingView: View {
             Text("来，呼出一次试试")
                 .font(.system(size: 21, weight: .bold))
                 .foregroundStyle(DT.fgStrong)
-            Text("把鼠标移到 **你当前电脑屏幕顶部中央**的刘海（摄像头所在的黑色区域），停留即可。注意：是屏幕上的真实刘海，不是下方示意图。")
-                .font(.system(size: 12.5))
-                .foregroundStyle(DT.muted)
-                .padding(.top, 8)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("把鼠标移到 **你当前电脑屏幕顶部中央**的刘海（摄像头所在的黑色区域），停留即可。注意：是屏幕上的真实刘海，不是下方示意图。")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(DT.muted)
+                // 外接屏无刘海：胶囊把手兜底入口的教学（否则该能力完全不可发现）
+                Text("外接显示器没有刘海：把鼠标移到那块屏幕顶部中央，会出现一个小把手，悬停即可呼出。")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(DT.muted)
+            }
+            .padding(.top, 8)
             // 刘海图形区：surface2 底内嵌一块黑色刘海 + 摄像头点 + 向上脉冲 + 状态行
             VStack(spacing: 12) {
                 NotchPulse()
@@ -281,17 +307,17 @@ struct OnboardingView: View {
         }
     }
 
-    /// 状态行：等待呼出（muted）→ 已成功呼出 ✓（绿色）
+    /// 状态行：等待呼出（muted）→ 已成功呼出 ✓（成功绿）
     private var statusLine: some View {
         HStack(spacing: 6) {
             if summoned {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(DT.link)
+                    .foregroundStyle(DT.success)
             }
             Text(summoned ? "已成功呼出 ✓" : "状态：等待呼出…")
                 .font(.system(size: 12))
-                .foregroundStyle(summoned ? DT.link : DT.muted)
+                .foregroundStyle(summoned ? DT.success : DT.muted)
         }
     }
 
@@ -306,7 +332,8 @@ struct OnboardingView: View {
                 OnboardingGhostButton(title: "跳过引导") { skip() }
             case 2:
                 OnboardingGhostButton(title: "← 上一步") {
-                    withAnimation(.easeOut(duration: 0.15)) { step = 1 }
+                    stepDirection = -1
+                    withAnimation(.easeInOut(duration: 0.22)) { step = 1 }
                 }
             default:
                 OnboardingGhostButton(title: "跳过") { skip() }
@@ -316,7 +343,8 @@ struct OnboardingView: View {
             switch step {
             case 1, 2:
                 DialogPrimaryButton(title: "下一步 →") {
-                    withAnimation(.easeOut(duration: 0.15)) { step += 1 }
+                    stepDirection = 1
+                    withAnimation(.easeInOut(duration: 0.22)) { step += 1 }
                 }
             default:
                 // 未呼出也可点（直接进入主界面）；呼出成功后升级为 accent 主按钮
@@ -424,7 +452,7 @@ private struct OnboardingGhostButton: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .onHover { isHovering = $0 }
     }
 }

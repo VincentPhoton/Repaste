@@ -28,10 +28,15 @@ struct ImagePreviewOverlay: View {
 
     var body: some View {
         ZStack {
-            // 半透明黑遮罩 rgba(0,0,0,.55)：点击关闭
+            // 半透明黑遮罩 rgba(0,0,0,.55)：点击关闭。
+            // 关闭层用 Button(.plain) 而非 onTapGesture：裸手势在 NSHostingView 上与
+            // 浮层移除 transition 存在竞态（mouseUp 与视图移除竞争），偶发手势图卡死
+            // 后吞掉面板内所有后续点击；Button 走 AppKit 完整点击语义更稳
             Color.black.opacity(0.55)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onClose)
+            Button(action: onClose) {
+                Color.clear.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             VStack(spacing: 14) {
                 // 降级提示条（原图已被 TTL 清理：显示缩略图、不提供复制图片）
@@ -96,7 +101,7 @@ struct ImagePreviewOverlay: View {
         .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DT.unknown.opacity(0.14))
+                .fill(DT.warn.opacity(0.14))
         )
     }
 
@@ -114,7 +119,7 @@ struct ImagePreviewOverlay: View {
                         .padding(.vertical, 8)
                         .background(Capsule().fill(DT.accentBtn))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.mattePress)
             }
             Button(action: onClose) {
                 Text("关闭")
@@ -124,7 +129,7 @@ struct ImagePreviewOverlay: View {
                     .padding(.vertical, 8)
                     .background(Capsule().fill(DT.button))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.mattePress)
         }
     }
 

@@ -77,7 +77,7 @@ struct DialogPrimaryButton: View {
                         .fill(color)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 }
 
@@ -215,7 +215,7 @@ struct GroupPicker: View {
             .padding(.horizontal, 11)
             .frame(height: 36)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
         .background(
             RoundedRectangle(cornerRadius: DT.innerCardRadius, style: .continuous)
                 .fill(DT.surface2)
@@ -287,7 +287,7 @@ struct GroupPicker: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.mattePress)
     }
 
     /// 分隔线

@@ -68,10 +68,19 @@ enum PanelDialog: Equatable {
 
 // MARK: - Toast 数据
 
-/// 面板顶部 toast：主标题 + 可选副标题（如条目预览摘要）
+/// 面板顶部 toast：主标题 + 可选副标题（如条目预览摘要）+ 可选动作按钮（如删除后「撤销」）
 struct Toast: Equatable {
     let title: String
     let subtitle: String?
+    /// 动作按钮文字（nil = 无按钮）
+    let actionTitle: String?
+    /// 动作回调（仅按钮点击触发；toast 自动消失不触发）
+    let action: (() -> Void)?
+
+    /// 闭包不参与相等比较（内容一致即视为同一个 toast）
+    static func == (lhs: Toast, rhs: Toast) -> Bool {
+        lhs.title == rhs.title && lhs.subtitle == rhs.subtitle && lhs.actionTitle == rhs.actionTitle
+    }
 }
 
 // MARK: - 面板状态机
@@ -145,12 +154,19 @@ final class PanelViewModel {
     /// 模板行 ⋮ 按钮在面板坐标系中的锚点 frame
     var templateMenuAnchor: CGRect = .zero
 
-    /// 当前 toast（nil = 无 toast；1.2s 自动消失）
+    /// 当前 toast（nil = 无 toast；默认 1.3s 自动消失，带动作按钮的 4s）
     private(set) var toast: Toast?
     /// toast 自动消失任务（新 toast 到来时取消旧任务）
     private var toastDismissTask: Task<Void, Never>?
-    /// toast 展示后的延迟收面板任务（连续使用条目时重置计时；面板重新展示时取消）
-    private var deferredHideTask: Task<Void, Never>?
+
+    // MARK: 删除撤销
+
+    /// 待删除条目（撤销窗口内条目仍在数据库、UI 已隐藏；窗口结束才真正落库删除）
+    private var pendingDeletes: [UUID: Clip] = [:]
+    /// 每条待删除条目的延迟提交任务（撤销时取消）
+    private var pendingDeleteTasks: [UUID: Task<Void, Never>] = [:]
+    /// 删除撤销窗口时长（toast 停留时长与延迟提交一致）
+    private static let deleteUndoWindow: TimeInterval = 4
 
     // MARK: 数据快照
 
@@ -164,16 +180,60 @@ final class PanelViewModel {
     private let store = ClipboardStore.shared
     private let settings = SettingsStore.shared
 
+    // MARK: 实时刷新
+
+    /// 剪贴板历史变化监听 token（ClipboardMonitor 入库/置顶后广播）
+    private var historyObserver: NSObjectProtocol?
+
+    /// 监听历史变化：面板可见时实时 reload（新条目带动画滑入列表顶部）
+    init() {
+        historyObserver = Self.makeHistoryObserver(self)
+    }
+
+    deinit {
+        if let historyObserver {
+            NotificationCenter.default.removeObserver(historyObserver)
+        }
+    }
+
+    /// 历史变化观察者工厂（独立静态方法，避免 init 闭包直接捕获 self 的并发警告）
+    private static func makeHistoryObserver(_ weakTarget: PanelViewModel) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(
+            forName: .clipboardHistoryDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak weakTarget] _ in
+            // 绑定为不可变值再进 Task，避免「捕获可变变量」的并发警告
+            guard let target = weakTarget else { return }
+            // queue: .main 不保证 MainActor 隔离，经 MainActor Task 派发
+            Task { @MainActor in
+                target.refreshIfVisible()
+            }
+        }
+    }
+
+    /// 面板可见时带动画刷新列表（复制新内容 → 0.5s 内滑入列表顶部）
+    @MainActor
+    private func refreshIfVisible() {
+        guard PanelController.shared.isPanelVisible else { return }
+        withAnimation(.snappy(duration: 0.3, extraBounce: 0.1)) {
+            reload()
+        }
+    }
+
     // MARK: 数据加载
 
-    /// 重新拉取数据（打开面板 / 删除条目后调用）
+    /// 重新拉取数据（打开面板 / 删除条目后调用；待删除条目从快照中剔除，UI 即时隐藏）
     func reload() {
-        clips = store.fetchAllClips()
+        let fetched = store.fetchAllClips()
+        clips = pendingDeletes.isEmpty ? fetched : fetched.filter { pendingDeletes[$0.id] == nil }
         groups = store.fetchAllGroups()
     }
 
     /// 面板打开时恢复设置：tab 取 defaultTab、来源筛选按 rememberAppFilter 恢复、重置搜索与键盘选中
     func prepareForDisplay() {
+        // 提交全部待删除条目（面板重开后不再保留撤销窗口）
+        commitAllPendingDeletes()
         reload()
         selectedTab = PanelTab.fromSettings(settings.defaultTab)
         searchText = ""
@@ -188,13 +248,14 @@ final class PanelViewModel {
         browserChooserClip = nil
         toast = nil
         toastDismissTask?.cancel()
-        deferredHideTask?.cancel()
         resetSelection()
         searchFocusRequest += 1
     }
 
-    /// 面板关闭时持久化：rememberAppFilter 开启时保存当前来源筛选
+    /// 面板关闭时持久化：rememberAppFilter 开启时保存当前来源筛选；待删除条目一并提交
+    /// （toast 随面板消失、撤销入口不复存在）
     func persistOnHide() {
+        commitAllPendingDeletes()
         if settings.rememberAppFilter {
             settings.lastSourceFilter = selectedSourceFilter
         }
@@ -234,6 +295,12 @@ final class PanelViewModel {
     /// 「录制已暂停」提示条是否显示
     var showsPausedBanner: Bool {
         !settings.recordingEnabled
+    }
+
+    /// 恢复剪贴板记录（暂停提示条「恢复」按钮）：写回开关即生效（监控引擎每次变化实时读取）
+    func resumeRecording() {
+        settings.recordingEnabled = true
+        showToast("已恢复记录")
     }
 
     /// 过滤排序后的列表：
@@ -349,27 +416,27 @@ final class PanelViewModel {
     // MARK: 动作
 
     /// 使用条目（点击行 / ⏎ / 模板点击共用）：按 pasteTarget 走「写剪贴板」或「直接粘贴到目标 App」
-    /// - clipboard（默认，零权限）：写回剪贴板 → toast「已写入剪贴板」→ toast 展示完收起面板（用户去目标 App ⌘V）
+    /// - clipboard（默认，零权限）：写回剪贴板 → toast「已写入剪贴板」，面板保持展开（可连续取用多条）
     /// - app：需辅助功能授权；未授权自动回落 clipboard + toast；已授权写剪贴板 → 收面板 → 80ms 后向目标 App 发 ⌘V
     func use(clip: Clip) {
         let pasteTarget = settings.pasteTarget
         let eventName = clip.isTemplate ? EventLog.templateUsed : EventLog.itemUsed
         EventLog.track(eventName, ["kind": clip.kind, "paste_target": pasteTarget])
 
-        // 默认流：写剪贴板 → toast「已写入剪贴板」→ toast 展示完收面板（toast 绘制在面板内，需保持面板可见）
+        // 默认流：写剪贴板 → toast「已写入剪贴板」→ 面板保持展开
         guard pasteTarget == "app" else {
             PasteboardWriter.write(clip: clip)
-            hideAfterToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
+            showToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
             return
         }
 
-        // app 流未授权辅助功能：自动回落 clipboard 模式（写剪贴板 + toast + 延迟收面板 + 事件）
+        // app 流未授权辅助功能：自动回落 clipboard 模式（写剪贴板 + toast，面板保持展开）
         guard AutoPaster.isAuthorized() else {
             settings.pasteTarget = "clipboard"
             settings.accessibilityGranted = false
             EventLog.track(EventLog.autoPasteDenied, ["kind": clip.kind, "reason": "unauthorized"])
             PasteboardWriter.write(clip: clip)
-            hideAfterToast("未授权，已写入剪贴板", subtitle: toastSubtitle(for: clip))
+            showToast("未授权，已写入剪贴板", subtitle: toastSubtitle(for: clip))
             return
         }
         settings.accessibilityGranted = true
@@ -473,18 +540,10 @@ final class PanelViewModel {
         browserChooserClip = nil
     }
 
-    /// 删除条目（⌫ / 行内菜单删除；直接删不弹确认，MVP 快速操作）
+    /// 删除条目（⌫ / 行内菜单删除；不弹确认，toast 内 4s 可撤销）
     func delete(clip: Clip) {
         EventLog.track(EventLog.clipDeleted, ["kind": clip.kind])
-        store.delete(clip: clip)
-        reload()
-        // 修正键盘选中下标（越界时收敛到列表末端）
-        let count = filteredClips.count
-        if count == 0 {
-            selectionIndex = nil
-        } else {
-            selectionIndex = min(selectionIndex ?? 0, count - 1)
-        }
+        beginPendingDelete(clip)
     }
 
     /// 置顶切换：翻转 pinned + 持久化（SwiftData 显式 save）+ 列表重排（pinned 置顶已有）+ 选中跟随
@@ -661,10 +720,19 @@ final class PanelViewModel {
         showToast("已写入剪贴板", subtitle: toastSubtitle(for: clip))
     }
 
-    /// 删除模板条目（只删该条模板，不动历史）
+    /// 删除模板条目（只删该条模板，不动历史；同样走待删除 + 撤销机制）
     func deleteTemplate(clip: Clip) {
         EventLog.track(EventLog.clipDeleted, ["kind": clip.kind])
-        store.delete(clip: clip)
+        beginPendingDelete(clip)
+    }
+
+    // MARK: 删除撤销
+
+    /// 进入待删除状态：列表立即隐藏 + 撤销 toast + 延迟提交（窗口结束才真正落库删除，连带图片文件）
+    private func beginPendingDelete(_ clip: Clip) {
+        // 重复触发（同一 toast 窗口内再次删除同一条目）直接忽略
+        guard pendingDeletes[clip.id] == nil else { return }
+        pendingDeletes[clip.id] = clip
         reload()
         // 修正键盘选中下标（越界时收敛到列表末端）
         let count = filteredClips.count
@@ -672,6 +740,48 @@ final class PanelViewModel {
             selectionIndex = nil
         } else {
             selectionIndex = min(selectionIndex ?? 0, count - 1)
+        }
+        showToast(
+            "已删除",
+            subtitle: toastSubtitle(for: clip),
+            duration: Self.deleteUndoWindow,
+            actionTitle: "撤销"
+        ) { [weak self] in
+            self?.undoDelete(clipId: clip.id)
+        }
+        pendingDeleteTasks[clip.id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.deleteUndoWindow))
+            guard !Task.isCancelled else { return }
+            self?.commitDelete(clipId: clip.id)
+        }
+    }
+
+    /// 撤销删除：条目从未真正落库删除，恢复展示、选中跟随，轻提示确认
+    func undoDelete(clipId: UUID) {
+        pendingDeleteTasks.removeValue(forKey: clipId)?.cancel()
+        guard pendingDeletes.removeValue(forKey: clipId) != nil else { return }
+        reload()
+        selectionIndex = filteredClips.firstIndex(where: { $0.id == clipId })
+        showToast("已恢复")
+    }
+
+    /// 提交单条删除（撤销窗口结束）：真正落库删除；UI 无变化（条目此前已隐藏）
+    private func commitDelete(clipId: UUID) {
+        pendingDeleteTasks.removeValue(forKey: clipId)
+        guard let clip = pendingDeletes.removeValue(forKey: clipId) else { return }
+        store.delete(clip: clip)
+    }
+
+    /// 提交全部待删除条目（面板隐藏 / 重新展示等撤销入口消失的时机）
+    private func commitAllPendingDeletes() {
+        guard !pendingDeletes.isEmpty else { return }
+        for id in pendingDeletes.keys {
+            pendingDeleteTasks.removeValue(forKey: id)?.cancel()
+        }
+        let clips = pendingDeletes.values
+        pendingDeletes.removeAll()
+        for clip in clips {
+            store.delete(clip: clip)
         }
     }
 
@@ -727,6 +837,26 @@ final class PanelViewModel {
         previewingClip = nil
     }
 
+    /// 浮层拆除代次（自愈机制）：PanelView 监测 overlayStateFlags 归空后调用调度，
+    /// 0.7s 后（移除 transition 应已结束）递增——浮层容器以 .id(overlayTeardownToken) 挂载，
+    /// 身份变化强制 SwiftUI 拆除整个浮层子树。移除 transition 偶发卡住时视图会残留
+    /// 在树中（不可见但全尺寸遮罩吞点击，重开面板才恢复），代次递增保证残留被彻底拆除
+    var overlayTeardownToken = 0
+    /// 拆除调度任务
+    private var overlayTeardownTask: Task<Void, Never>?
+
+    /// 调度浮层强制拆除（所有浮层归空 0.7s 后执行；期间有浮层打开则放弃本次，避免打断展示）
+    func scheduleOverlayTeardown() {
+        overlayTeardownTask?.cancel()
+        overlayTeardownTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.7))
+            guard !Task.isCancelled else { return }
+            guard moreMenuClip == nil, templateMenuClip == nil, browserChooserClip == nil,
+                  previewingClip == nil, activeDialog == nil, toast == nil else { return }
+            overlayTeardownToken &+= 1
+        }
+    }
+
     /// 复制图片（预览内）：原图数据写回剪贴板（TIFF 标准类型 + PNG 原始数据）+ 防自吞
     func copyPreviewImage(clip: Clip) {
         guard let ref = clip.payloadRef,
@@ -756,29 +886,42 @@ final class PanelViewModel {
 
     // MARK: toast
 
-    /// 显示 toast 轻提示（面板顶部，1.3s 自动消失；新提示覆盖旧提示）
-    func showToast(_ title: String, subtitle: String? = nil) {
-        toast = Toast(title: title, subtitle: subtitle)
+    /// 显示 toast 轻提示（面板顶部自动消失；新提示覆盖旧提示）
+    /// - Parameters:
+    ///   - duration: 自动消失时长（默认 1.3s；带撤销动作的删除提示为 4s）
+    ///   - actionTitle / action: 可选动作按钮（如删除后「撤销」；按钮点击才触发，自动消失不触发）
+    func showToast(
+        _ title: String,
+        subtitle: String? = nil,
+        duration: TimeInterval = 1.3,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        toast = Toast(title: title, subtitle: subtitle, actionTitle: actionTitle, action: action)
         toastDismissTask?.cancel()
         // 必须 @MainActor：本类未隔离，裸 Task 会跑在后台线程，
         // 后台线程修改 SwiftUI 观察的状态会破坏视图/手势系统（表现为按钮突然全部无响应）
         toastDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1.3))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
             self?.toast = nil
         }
     }
 
-    /// 显示 toast 并在展示结束后（1.3s）收起面板（toast 绘制在面板内，需保持面板可见；
-    /// 连续使用条目时重置计时；面板被重新呼出时经 prepareForDisplay 取消）
-    private func hideAfterToast(_ title: String, subtitle: String? = nil) {
-        showToast(title, subtitle: subtitle)
-        deferredHideTask?.cancel()
-        deferredHideTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.3))
-            guard !Task.isCancelled else { return }
-            PanelController.shared.hide()
-        }
+    /// 诊断用：当前浮层状态标记（M=更多菜单 T=模板菜单 B=浏览器选择 P=图片预览
+    /// D=弹窗 o=toast g=模板拖拽中；空串 = 全部关闭）。
+    /// 随每次点击投递日志输出 + PanelView onChange 记录状态迁移，
+    /// 用于定位「点击投递到窗口但无动作」时是哪个浮层状态在拦截
+    var overlayStateFlags: String {
+        var flags = ""
+        if moreMenuClip != nil { flags += "M" }
+        if templateMenuClip != nil { flags += "T" }
+        if browserChooserClip != nil { flags += "B" }
+        if previewingClip != nil { flags += "P" }
+        if activeDialog != nil { flags += "D" }
+        if toast != nil { flags += "o" }
+        if draggingTemplateId != nil { flags += "g" }
+        return flags
     }
 
     /// 生成 toast 副标题：条目预览截断，最长 40 字符

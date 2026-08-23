@@ -137,7 +137,7 @@ struct DialogTextEditor: View {
                         .font(.system(size: 13))
                         .foregroundStyle(DT.muted2)
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 4)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $text)
@@ -145,7 +145,7 @@ struct DialogTextEditor: View {
                     .foregroundStyle(DT.fg)
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 4)
                     .frame(height: 120)
                     .focused($focused)
                     .onKeyPress { keyPress in

@@ -43,6 +43,11 @@ struct RepasteApp: App {
 /// App 代理：启动完成后按需打开首启引导窗口（幂等；完成 / 跳过后不再出现）
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 启动就绪动效：刘海苏醒 + 把手残留（已完成首启引导才播--
+        // 引导出现的会话由引导第 3 步教学刘海呼出，动效不叠加）
+        if SettingsStore.shared.onboardingCompleted {
+            StartupReadyAnimator.shared.playIfNeeded()
+        }
         OnboardingLauncher.launchIfNeeded()
     }
 }

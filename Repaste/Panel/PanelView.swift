@@ -884,6 +884,8 @@ struct PanelView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(DT.muted)
                         .lineLimit(1)
+                        // 空间不足时副标题最先被截断（低优先级先压缩），保住标题与动作按钮
+                        .layoutPriority(-1)
                 }
                 if let actionTitle = toast.actionTitle, let action = toast.action {
                     Button {
@@ -895,6 +897,8 @@ struct PanelView: View {
                             .padding(.horizontal, 9)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(DT.accent.opacity(0.18)))
+                            // 动作按钮文字永不压缩（避免「撤销」被截成「…」）
+                            .fixedSize()
                     }
                     .buttonStyle(.mattePress)
                     .help(actionTitle)

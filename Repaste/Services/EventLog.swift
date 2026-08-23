@@ -98,8 +98,10 @@ extension EventLog {
     static let imageViewed = "image_viewed"
     /// 面板点击穿透失联被看门狗自愈（字段 alpha：触发时面板透明度）
     static let panelClickThroughHealed = "panel_click_through_healed"
-    /// 鼠标按下实际投递到面板窗口（诊断：与 item_used 构成投递→动作漏斗，字段 alpha、ovl 浮层标记）
+    /// 鼠标按下实际投递到面板窗口（诊断：与 item_used 构成投递->动作漏斗，字段 alpha、ovl 浮层标记）
     static let panelMouseDelivered = "panel_mouse_delivered"
+    /// 启动就绪动效播放结束（字段 variant: notch（苏醒+把手）/ fallback（无刘海退化把手）；outcome: completed / interrupted）
+    static let startupWakePlayed = "startup_wake_played"
     /// 浮层状态迁移（诊断：M菜单/T模板菜单/B浏览器选择/P预览/D弹窗/o toast/g拖拽，字段 from、to）
     static let panelOverlayChanged = "panel_overlay_changed"
     /// SwiftUI 手势层收到的点击（诊断：与 panel_mouse_delivered 构成三层漏斗，字段 ovl）

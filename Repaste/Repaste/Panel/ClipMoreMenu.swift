@@ -41,7 +41,6 @@ struct ClipMoreMenu: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            menuTitle
             // 文本专属：无格式复制（其后加分隔线）
             if clip.kindEnum == .text {
                 item(.plainCopy, icon: "doc.on.doc", title: "无格式复制")
@@ -64,18 +63,6 @@ struct ClipMoreMenu: View {
                 .fill(DT.menuSurface)
         )
         .shadow(color: .black.opacity(0.55), radius: 18, y: 10)
-    }
-
-    // MARK: 标题
-
-    /// 顶部小标题（如「文本内容 · 更多操作」）
-    private var menuTitle: some View {
-        Text("\(clip.kindEnum.kindLabel)内容 · 更多操作")
-            .font(.system(size: 10.5))
-            .foregroundStyle(DT.muted2)
-            .padding(.horizontal, 11)
-            .padding(.top, 7)
-            .padding(.bottom, 5)
     }
 
     // MARK: 菜单项
@@ -139,11 +126,11 @@ struct ClipMoreMenu: View {
 
     // MARK: 高度估算
 
-    /// 菜单高度估算（供弹出方向上下翻转判断；行高 33、标题 32、分隔线 11、容器 padding 12）
+    /// 菜单高度估算（供弹出方向上下翻转判断；行高 33、分隔线 11、容器 padding 12）
     static func estimatedHeight(for clip: Clip) -> CGFloat {
         let hasExtraItem = clip.kindEnum == .text || clip.kindEnum == .image
         let itemCount = hasExtraItem ? 4 : 3
         let separatorCount = hasExtraItem ? 1 : 0
-        return 32 + 12 + CGFloat(itemCount) * 33 + CGFloat(separatorCount) * 11
+        return 12 + CGFloat(itemCount) * 33 + CGFloat(separatorCount) * 11
     }
 }

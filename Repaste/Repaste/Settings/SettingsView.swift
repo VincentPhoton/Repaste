@@ -843,10 +843,15 @@ struct SettingsGroupCard<Content: View>: View {
 }
 
 /// 设置行：左标签 13pt fg + 说明 11.5pt muted 第二行；控件紧跟标签左侧对齐
+/// 子树内有展开的下拉时提升自身层级（zIndex），避免下拉列表溢出后被同卡片内
+/// （渲染顺序更晚的）其它行遮挡；与 SettingsGroupCard 的提升配合，兼顾「同卡片行」与「跨卡片」两层遮挡
 struct SettingsRow<Control: View>: View {
     let title: String
     var subtitle: String? = nil
     @ViewBuilder let control: () -> Control
+
+    /// 子树内有展开的下拉（自身的下拉，用于行级层级提升）
+    @State private var dropdownOpen = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -863,6 +868,8 @@ struct SettingsRow<Control: View>: View {
             control()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onPreferenceChange(DropdownOpenKey.self) { dropdownOpen = $0 }
+        .zIndex(dropdownOpen ? 10 : 0)
     }
 }
 

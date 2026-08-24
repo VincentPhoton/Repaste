@@ -16,6 +16,21 @@ icon-design/
 no-notch-fallback-demo.html
 notch-ready-animation-proposals.html
 
+# 宣传片生成产物与脚本（仅本地保留）
+repaste-promo*
+shots/
+shots-en/
+verify-tpl19/
+repaste-notch/
+icon-256.png
+capture-promo*.js
+mix-promo*.sh
+embed-icon.js
+psnr-check.js
+psnr-detail.js
+verify-animation.js
+verify-promo.js
+
 # Trae IDE 配置
 .trae/
 

@@ -668,13 +668,16 @@ struct PanelView: View {
     /// 菜单浮层：透明点击层（点菜单外关闭）+ 菜单本体（按锚点定位，向下弹出、空间不足向上翻转）
     private var moreMenuOverlay: some View {
         ZStack(alignment: .topLeading) {
-            if viewModel.moreMenuClip != nil {
-                // 点击层：拦截面板内所有点击（含列表滚动），点任意处关闭菜单。
-                // 用 Button(.plain) 而非 onTapGesture：裸手势在 NSHostingView 上与
-                // 浮层移除 transition 存在竞态（mouseUp 与视图移除竞争），偶发手势图
-                // 卡死后吞掉面板内所有后续点击；Button 走 AppKit 完整点击语义更稳
-                dismissLayer { viewModel.closeMoreMenu() }
-            }
+            // 点击层：拦截面板内所有点击（含列表滚动），点任意处关闭菜单。
+            // - 用 Button(.plain) 而非 onTapGesture：裸手势在 NSHostingView 上与
+            //   浮层移除 transition 存在竞态（mouseUp 与视图移除竞争），偶发手势图
+            //   卡死后吞掉面板内所有后续点击；Button 走 AppKit 完整点击语义更稳
+            // - 常驻树中并以 allowsHitTesting 绑定菜单开闭，而非 if 条件移除：
+            //   移除 transition 播放期间（spring settle ~0.5s）视图仍参与命中测试，
+            //   退场中的全尺寸透明层会吞掉菜单刚关闭后落在面板内的一切点击
+            //   （表现为再点 ⋮ 无反应、需点两次）
+            dismissLayer { viewModel.closeMoreMenu() }
+                .allowsHitTesting(viewModel.moreMenuClip != nil)
             if let clip = viewModel.moreMenuClip {
                 let position = menuPosition(
                     anchor: viewModel.moreMenuAnchor,
@@ -694,11 +697,12 @@ struct PanelView: View {
     // MARK: 模板行 ⋮ 菜单浮层
 
     /// 模板菜单浮层：透明点击层（点菜单外关闭）+ 菜单本体（使用 / 复制 / 删除）
+    /// 点击层常驻 + allowsHitTesting 绑定开闭（同 moreMenuOverlay：避免退场动画期间
+    /// 透明层残留命中测试，吞掉菜单关闭后立即到来的点击）
     private var templateMenuOverlay: some View {
         ZStack(alignment: .topLeading) {
-            if viewModel.templateMenuClip != nil {
-                dismissLayer { viewModel.closeTemplateMenu() }
-            }
+            dismissLayer { viewModel.closeTemplateMenu() }
+                .allowsHitTesting(viewModel.templateMenuClip != nil)
             if let clip = viewModel.templateMenuClip {
                 TemplateRowMenu(clip: clip) { action in
                     viewModel.closeTemplateMenu()
@@ -726,12 +730,12 @@ struct PanelView: View {
     // MARK: 浏览器选择浮层（⌥ 点「打开链接」）
 
     /// 浏览器选择浮层：透明点击层（点浮层外关闭）+ 菜单本体（按「打开链接」按钮锚点定位，含上下翻转）
+    /// 点击层常驻 + allowsHitTesting 绑定开闭（同 moreMenuOverlay，防退场动画期间吞点击）
     @ViewBuilder
     private var browserChooserOverlay: some View {
         ZStack(alignment: .topLeading) {
-            if viewModel.browserChooserClip != nil {
-                dismissLayer { viewModel.closeBrowserChooser() }
-            }
+            dismissLayer { viewModel.closeBrowserChooser() }
+                .allowsHitTesting(viewModel.browserChooserClip != nil)
             if let clip = viewModel.browserChooserClip {
                 let options = BrowserChooserMenu.options()
                 let position = menuPosition(
@@ -801,6 +805,9 @@ struct PanelView: View {
             Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // 纯鼠标关闭手段，且三个菜单浮层的实例常驻树中，
+        // 需避免不可见按钮进入键盘 Tab 焦点链（键盘用户由 esc 逐层关闭兜底）
+        .accessibilityHidden(true)
     }
 
     /// 弹窗浮层：半透明遮罩（点击取消）+ 居中圆角卡片

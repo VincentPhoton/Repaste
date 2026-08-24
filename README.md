@@ -4,8 +4,12 @@
 </p>
 
 <p align="center">
-  <a href="#下载安装"><img src="https://img.shields.io/badge/platform-macOS%2015%2B-8B6BFF" alt="platform: macOS 15+"></a>
-  <a href="#从源码构建"><img src="https://img.shields.io/badge/Swift-5.0-8B6BFF" alt="Swift 5.0"></a>
+  <a href="README.md">简体中文</a> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <a href="#下载与安装"><img src="https://img.shields.io/badge/platform-macOS%2015%2B-8B6BFF" alt="platform: macOS 15+"></a>
+  <a href="#方式二从源码构建开发者"><img src="https://img.shields.io/badge/Swift-5.0-8B6BFF" alt="Swift 5.0"></a>
   <a href="#技术架构"><img src="https://img.shields.io/badge/dependencies-zero-8B6BFF" alt="零第三方依赖"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-8B6BFF" alt="license: MIT"></a>
 </p>

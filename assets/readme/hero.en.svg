@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="452" viewBox="0 0 1200 452"
+     role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">Repaste · Notch Clipboard</title>
+  <desc id="hero-desc">Repaste is a macOS clipboard manager: hover the notch to summon your clipboard history in 0.1 seconds. Every entry shows its source app; frequent items can be saved as template groups; links open with one click.</desc>
+
+  <defs>
+    <!-- Same diagonal gradient as the app icon (final design) -->
+    <linearGradient id="logoGrad" x1="0" y1="0" x2="0.82" y2="1">
+      <stop offset="0" stop-color="#b39cff"/>
+      <stop offset="0.52" stop-color="#8a63f0"/>
+      <stop offset="1" stop-color="#5f37c4"/>
+    </linearGradient>
+    <!-- Image thumbnail hint -->
+    <linearGradient id="thumbGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b6bff"/>
+      <stop offset="1" stop-color="#f0a3c0"/>
+    </linearGradient>
+    <!-- Panel shadow: only to separate overlapping layers -->
+    <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <!-- Screen crop rounded corners -->
+    <clipPath id="screenClip">
+      <rect x="636" y="56" width="520" height="244" rx="18"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background: matte black (same as the app panel #0A0A0A) -->
+  <rect width="1200" height="452" rx="26" fill="#0A0A0A"/>
+
+  <!-- ======================== Left: title ======================== -->
+
+  <!-- Logo: stacked cards + notch (miniature of the app icon motif) -->
+  <g id="logo">
+    <rect x="56" y="68" width="56" height="56" rx="15" fill="url(#logoGrad)"/>
+    <!-- White card + text lines -->
+    <rect x="68" y="96" width="32" height="22" rx="5" fill="#ffffff" opacity="0.96"/>
+    <rect x="74" y="102" width="19" height="3.5" rx="1.75" fill="#8a63f0"/>
+    <rect x="74" y="108.5" width="12" height="3.5" rx="1.75" fill="#8a63f0" opacity="0.55"/>
+    <!-- Notch + camera -->
+    <path d="M74 68 h20 v6.5 a5 5 0 0 1 -5 5 h-10 a5 5 0 0 1 -5 -5 z" fill="#0a0a0a"/>
+    <circle cx="84" cy="73.5" r="1.8" fill="#46d17e"/>
+    <!-- Eyebrow -->
+    <text x="128" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="17" letter-spacing="1.5" fill="#9AA3B8">Native macOS · Zero permissions · Open source</text>
+  </g>
+
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="56" y="208" font-size="66" font-weight="700" letter-spacing="1" fill="#EEF3FF">Repaste</text>
+    <text x="57" y="250" font-size="29" font-weight="600" letter-spacing="4" fill="#A38BFF">Notch Clipboard</text>
+    <text x="56" y="296" font-size="23" fill="#D6E4FB">Hover the notch for clipboard history in 0.1s.</text>
+    <text x="56" y="330" font-size="20" fill="#9AA3B8">Every entry shows its source app and type at a glance.</text>
+  </g>
+
+  <!-- Feature chips -->
+  <g id="feature-chips" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+     font-size="18" fill="#D6E4FB">
+    <rect x="56" y="362" width="152" height="32" rx="16" fill="none" stroke="rgba(255,255,255,0.14)"/>
+    <text x="132" y="383" text-anchor="middle">Source app tags</text>
+    <rect x="220" y="362" width="148" height="32" rx="16" fill="none" stroke="rgba(255,255,255,0.14)"/>
+    <text x="294" y="383" text-anchor="middle">Template groups</text>
+    <rect x="380" y="362" width="148" height="32" rx="16" fill="none" stroke="rgba(255,255,255,0.14)"/>
+    <text x="454" y="383" text-anchor="middle">One-click links</text>
+  </g>
+
+  <!-- ======================== Right: notch panel proof ======================== -->
+
+  <!-- Screen top crop (menu bar + desktop) -->
+  <g id="screen-crop">
+    <rect x="636" y="56" width="520" height="244" rx="18" fill="#0C0C10" stroke="rgba(255,255,255,0.10)"/>
+    <!-- Menu bar -->
+    <rect x="636" y="56" width="520" height="30" fill="#17171D" clip-path="url(#screenClip)"/>
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+       font-size="16" fill="#9AA3B8">
+      <text x="658" y="76">Finder</text>
+      <text x="718" y="76">File</text>
+      <text x="762" y="76">Edit</text>
+      <text x="1092" y="76" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">21:14</text>
+    </g>
+    <!-- Battery -->
+    <g stroke="#9AA3B8" fill="none">
+      <rect x="1100" y="69" width="21" height="10" rx="3" stroke-width="1.5"/>
+      <rect x="1122.5" y="72" width="2.5" height="4" rx="1" fill="#9AA3B8" stroke="none"/>
+      <rect x="1102" y="71" width="13" height="6" rx="2" fill="#9AA3B8" stroke="none"/>
+    </g>
+    <!-- Notch + camera -->
+    <path d="M846 56 h100 v10 a10 10 0 0 1 -10 10 h-80 a10 10 0 0 1 -10 -10 z" fill="#050507"/>
+    <circle cx="896" cy="63.5" r="3" fill="#46D17E" opacity="0.95"/>
+  </g>
+
+  <!-- Dropdown panel -->
+  <g id="panel">
+    <rect x="676" y="90" width="440" height="294" rx="16" fill="#0F0F14"
+          stroke="rgba(255,255,255,0.12)" filter="url(#panelShadow)"/>
+
+    <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+      <!-- Search row -->
+      <rect x="700" y="104" width="210" height="30" rx="10" fill="rgba(255,255,255,0.04)"
+            stroke="rgba(255,255,255,0.10)"/>
+      <circle cx="715" cy="118" r="5.5" fill="none" stroke="#8D95AB" stroke-width="2"/>
+      <line x1="719" y1="122" x2="723.5" y2="126.5" stroke="#8D95AB" stroke-width="2" stroke-linecap="round"/>
+      <text x="732" y="125" font-size="18" fill="#8D95AB">Search…</text>
+      <!-- Settings gear -->
+      <g stroke="#9AA3B8" stroke-width="2" stroke-linecap="round" fill="none">
+        <circle cx="1050" cy="119" r="7.5"/>
+        <line x1="1050" y1="107.5" x2="1050" y2="111"/>
+        <line x1="1050" y1="127" x2="1050" y2="130.5"/>
+        <line x1="1038.5" y1="119" x2="1042" y2="119"/>
+        <line x1="1058" y1="119" x2="1061.5" y2="119"/>
+      </g>
+      <!-- Power -->
+      <g stroke="#9AA3B8" stroke-width="2" stroke-linecap="round" fill="none">
+        <path d="M1080 110 v7"/>
+        <path d="M1073.5 114.5 A 8.5 8.5 0 1 0 1086.5 114.5"/>
+      </g>
+
+      <!-- Tab row: selected "All" white pill + template group tab "Personal" + ＋ -->
+      <rect x="700" y="148" width="64" height="30" rx="15" fill="#EEF3FF"/>
+      <text x="732" y="168" font-size="18" font-weight="700" text-anchor="middle" fill="#0A0A0A">All</text>
+      <text x="790" y="168" font-size="18" fill="#9AA3B8">Text</text>
+      <text x="838" y="168" font-size="18" fill="#9AA3B8">Images</text>
+      <text x="908" y="168" font-size="18" fill="#9AA3B8">Links</text>
+      <text x="964" y="168" font-size="18" fill="#9AA3B8">Personal</text>
+      <text x="1048" y="169" font-size="18" font-weight="700" fill="#A38BFF">＋</text>
+
+      <!-- Source bar -->
+      <text x="700" y="204" font-size="18"><tspan fill="#D6E4FB">All sources</tspan><tspan fill="#8D95AB"> · Safari · Terminal · Notion</tspan></text>
+
+      <line x1="700" y1="216" x2="1092" y2="216" stroke="rgba(255,255,255,0.08)"/>
+
+      <!-- Card 1 · link (bold domain + open button) -->
+      <circle cx="708" cy="246" r="5" fill="#4FD47F"/>
+      <text x="724" y="253" font-size="21" font-weight="700" fill="#EEF3FF">maccy.app</text>
+      <rect x="946" y="230" width="78" height="30" rx="15" fill="#7450EA"/>
+      <text x="985" y="251" font-size="18" font-weight="700" text-anchor="middle" fill="#FFFFFF">Open ↗</text>
+      <g fill="#9AA3B8">
+        <circle cx="1078" cy="238.5" r="2.3"/>
+        <circle cx="1078" cy="246" r="2.3"/>
+        <circle cx="1078" cy="253.5" r="2.3"/>
+      </g>
+      <text x="724" y="277" font-size="18" fill="#8D95AB">Safari · 2 min ago</text>
+
+      <line x1="700" y1="290" x2="1092" y2="290" stroke="rgba(255,255,255,0.08)"/>
+
+      <!-- Card 2 · text (monospace command + source app) -->
+      <circle cx="708" cy="320" r="5" fill="#8FD0F4"/>
+      <text x="724" y="327" font-size="19" fill="#D6E4FB"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace">npm run dev --host 0.0.0.0</text>
+      <g fill="#9AA3B8">
+        <circle cx="1078" cy="312.5" r="2.3"/>
+        <circle cx="1078" cy="320" r="2.3"/>
+        <circle cx="1078" cy="327.5" r="2.3"/>
+      </g>
+      <text x="724" y="351" font-size="18" fill="#8D95AB">Terminal · 8 min ago · 1,204 chars</text>
+    </g>
+  </g>
+</svg>

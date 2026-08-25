@@ -71,13 +71,21 @@ final class AppWindowBridge {
 
     /// 打开设置窗口
     func openSettings() {
+        // 设置窗口为常规层级，会被 statusBar 级浮动主面板遮挡：
+        // 展示设置的同时立即收起主面板（面板不可见时 hide 幂等无动作）
+        PanelController.shared.hide()
         if settingsWindow == nil {
-            settingsWindow = Self.makeWindow(
+            let window = Self.makeWindow(
                 title: "设置",
                 content: SettingsView(),
                 size: NSSize(width: 720, height: 520),
                 resizable: true
             )
+            // 始终压在应用内全部窗口与组件之上：主面板 / 胶囊 / 启动动效均为
+            // statusBar 级浮动层（窗口层级全局排序，常规层级永远低于它们），
+            // 取 statusBar + 1 保证设置打开期间再呼出的任何组件都盖不住它
+            window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+            settingsWindow = window
         }
         present(settingsWindow)
     }

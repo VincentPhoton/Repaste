@@ -23,6 +23,10 @@ final class ImageStore {
     /// 缩略图最大边长（等比缩放，小图不放大）
     private static let thumbMaxDimension: CGFloat = 40
 
+    /// 内存缓存：解码后的 NSImage 按文件名缓存（NSCache 线程安全，主线程 load 与后台解码共用）。
+    /// 避免滚动列表 / 重复打开预览时对同一文件反复 `NSImage(contentsOf:)` 解码。
+    nonisolated(unsafe) private static let cache = NSCache<NSString, NSImage>()
+
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         root = support.appendingPathComponent("Repaste/images", isDirectory: true)
@@ -54,9 +58,23 @@ final class ImageStore {
 
     // MARK: 读取
 
-    /// 加载图片（传入原图或缩略图文件名均可）
+    /// 磁盘解码图片并走内存缓存（线程安全；主线程 load 与后台解码均可调用）
+    nonisolated static func decodeCached(fileName: String, url: URL) -> NSImage? {
+        let key = fileName as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// 加载图片（传入原图或缩略图文件名均可；命中内存缓存避免重复解码）
     func load(name: String) -> NSImage? {
-        NSImage(contentsOf: root.appendingPathComponent(name))
+        Self.decodeCached(fileName: name, url: root.appendingPathComponent(name))
+    }
+
+    /// 移除指定文件的缓存（删除文件后避免残留解码结果）
+    nonisolated static func invalidateCache(_ name: String) {
+        cache.removeObject(forKey: name as NSString)
     }
 
     /// 文件完整 URL
@@ -76,6 +94,8 @@ final class ImageStore {
         for name in names {
             try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
             try? FileManager.default.removeItem(at: root.appendingPathComponent(Self.thumbName(for: name)))
+            Self.invalidateCache(name)
+            Self.invalidateCache(Self.thumbName(for: name))
         }
     }
 
@@ -85,6 +105,7 @@ final class ImageStore {
         for url in files {
             try? FileManager.default.removeItem(at: url)
         }
+        Self.cache.removeAllObjects()
     }
 
     // MARK: TTL 清理

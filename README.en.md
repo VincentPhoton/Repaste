@@ -117,13 +117,9 @@ Pure native macOS: SwiftUI for UI, AppKit for windows (the main panel is a borde
 
 ## Roadmap
 
-- [ ] Settings import / export and "Reset to defaults"
-- [ ] Localization (Simplified Chinese / English)
-- [ ] Template variables and placeholders (`{{date}}`, `{{clipboard}}`)
-- [ ] Link preview cards (title & thumbnail)
-- [ ] Image OCR, drag-to-export out of the panel
-- [ ] Code signing + notarization + Sparkle auto-update
-- [ ] iCloud / multi-device sync
+This fork has **no preset roadmap** — it iterates on demand: new features are developed when there's a personal need or user feedback.
+
+Feature requests and bug reports are welcome via [Issues](https://github.com/VincentPhoton/Repaste/issues).
 
 ## Dependencies
 

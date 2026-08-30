@@ -406,16 +406,39 @@ struct ClipRow: View {
 
     // MARK: 图片懒加载
 
-    /// 加载来源图标与图片缩略图（每行一次）
+    /// 加载来源图标与图片缩略图（每行一次；磁盘解码放到后台，避免滚动面板时阻塞主线程）
     private func loadImages() {
         // 来源 App 图标
         if let iconPath = clip.sourceIconPath {
-            sourceIcon = AppIconStore.shared.load(fileName: iconPath)
+            let url = AppIconStore.shared.fileURL(fileName: iconPath)
+            Task {
+                let image = await Task.detached {
+                    AppIconStore.decodeCached(fileName: iconPath, url: url)
+                }.value
+                sourceIcon = image
+            }
         }
         // 图片缩略图（缩略图名由原图名推导 "-thumb"，缺失回退原图）
         if clip.kindEnum == .image, let ref = clip.payloadRef {
-            thumbnail = ImageStore.shared.load(name: ImageStore.thumbName(for: ref))
-                ?? ImageStore.shared.load(name: ref)
+            let thumbName = ImageStore.thumbName(for: ref)
+            let thumbURL = ImageStore.shared.fileURL(name: thumbName)
+            let origName = ref
+            let origURL = ImageStore.shared.fileURL(name: origName)
+            Task {
+                let thumb = await Task.detached {
+                    ImageStore.decodeCached(fileName: thumbName, url: thumbURL)
+                }.value
+                if let image = thumb {
+                    thumbnail = image
+                } else {
+                    let orig = await Task.detached {
+                        ImageStore.decodeCached(fileName: origName, url: origURL)
+                    }.value
+                    if let image = orig {
+                        thumbnail = image
+                    }
+                }
+            }
         }
     }
 }

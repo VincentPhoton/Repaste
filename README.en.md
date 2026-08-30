@@ -9,162 +9,130 @@
 
 <p align="center">
   <a href="#download--installation"><img src="https://img.shields.io/badge/platform-macOS%2015%2B-8B6BFF" alt="platform: macOS 15+"></a>
-  <a href="#option-2-build-from-source-developers"><img src="https://img.shields.io/badge/Swift-5.0-8B6BFF" alt="Swift 5.0"></a>
-  <a href="#technical-architecture"><img src="https://img.shields.io/badge/dependencies-zero-8B6BFF" alt="zero third-party dependencies"></a>
+  <a href="#technical-architecture"><img src="https://img.shields.io/badge/Swift-5.0-8B6BFF" alt="Swift 5.0"></a>
+  <a href="#dependencies"><img src="https://img.shields.io/badge/dependencies-zero-8B6BFF" alt="zero third-party dependencies"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-8B6BFF" alt="license: MIT"></a>
 </p>
 
-**Repaste (Notch Clipboard)** is a native macOS clipboard manager. Hover your mouse over the MacBook notch for 0.1 seconds and your clipboard history unfolds right below it; or press `⌥⇧V` anytime to summon it at the center of the screen. Every entry is labeled with **which app it came from and what type it is**, frequently used items can be saved as **template groups**, and links **open in the browser with one click**. All data stays on your Mac — **zero system permissions** required.
+> **This repository is an improved fork of [klosexf/Repaste](https://github.com/klosexf/Repaste)**, maintained under the original MIT license with performance optimizations, interaction fixes, and feature enhancements. The original author's copyright and license are in [LICENSE](LICENSE).
+
+**Repaste (Notch Clipboard)** is a native macOS clipboard manager. Hover the notch of your MacBook for a moment and the clipboard history drops down from the notch; or press `⌥⇧V` anytime to summon it from the center of the screen. Every entry shows **which app it came from and what type it is**; frequently used content can be saved as **template groups**, and links open in your browser **with one click**. Everything stays on your machine with **zero system permissions**.
 
 ## Features
 
-- **Two summon entrances** — hover the notch for 0.1s to open the dropdown panel, or press `⌥⇧V` to summon it centered on screen; both entrances share the same list for a consistent experience
-- **Source app at a glance** — every entry shows its source app (icon + name); filter by source, combinable with search and type tabs
-- **Clipboard history** — text / image / link / file cards with a 200-entry rolling cap (pinned and template items excluded); search as you type
-- **Custom template groups** — each group is a tab at the top of the panel; create as many as you like; `⌘G` turns any history entry into a template, exempt from eviction
-- **One-click link opening** — domain highlighted in bold (anti-phishing); click "Open" to jump straight to the browser; hold `⌥` to temporarily choose which browser to use
-- **⋮ More menu** — actions matched to content type: "Copy without formatting" for text, "View large" for images, plus save-to-template / pin / delete
-- **False-trigger protection** — a three-stage state machine (dwell threshold / leave delay / cooldown); suppressed in full-screen apps by default; never triggers in the top screen corners (menu bar & Control Center territory)
-- **Works without a notch** — non-notch Macs and external displays automatically fall back to a floating top capsule that appears when the mouse approaches; on multi-screen setups the panel only opens on the screen the mouse is on
-
-## Summoning the Panel
-
-| Entrance | Action | Panel position |
-| --- | --- | --- |
-| Notch hover | Slide the mouse into the notch hot zone, dwell 100ms | Unfolds downward from the notch |
-| Global hotkey | `⌥⇧V` (default, no conflict with Maccy / Raycast) | Centered on screen |
-| Top capsule | On non-notch / external screens, move the mouse near the top edge | Capsule expands into the same panel |
-
-Anti-false-trigger state machine parameters (sensitivity adjustable in Settings):
-
-| Parameter | Default | Notes |
-| --- | --- | --- |
-| Dwell threshold | 100 ms | Three levels: Sensitive 50 / Default 100 / Relaxed 250 |
-| Leave delay | 400 ms | Panel collapses after the mouse leaves; never blocks menu-bar clicks |
-| Cooldown | 800 ms | Re-entering shortly after closing won't trigger, preventing flicker |
-| Suppression | - | Never triggers while a mouse button is held, in full-screen apps (can be disabled), or within 120pt of the top screen corners |
+- **Two summoning entrances** — notch hover drops the panel from the notch; `⌥⇧V` centers it. Both share the same list and behave identically.
+- **Reliable on fast entry** — the hot zone is calibrated so quickly flicking the mouse into the notch triggers reliably (no more slowly brushing the edge).
+- **Source app at a glance** — every entry shows its source app (icon + name), filterable by source, stackable with search and type tabs. Attribution is adapted for **background screenshot tools** (e.g. capcap).
+- **Clipboard history** — text / image / link / file cards, auto-evicted at a 200-entry cap (pinned and template entries excluded), search-as-you-type.
+- **Adjustable visible rows** — settings let the panel show a fixed 1–5 rows, with the rest scrolling inside the list (like a web page), with a scrollbar hint.
+- **Custom template groups** — each group is a tab at the top of the panel; create as many as you like. `⌘G` turns any history entry into a template that never gets evicted.
+- **One-click links** — the domain is bolded (phishing protection); click "Open" to jump to the browser, or hold `⌥` to temporarily pick a browser.
+- **⋮ more menu** — intelligently matched by content type: "Copy Plain Text" for text, "View Image" for images, plus Save to Group / Pin / Delete.
+- **Accidental-trigger protection** — a three-stage state machine (dwell threshold / leave delay / cooldown); fullscreen apps are suppressed by default, and the top-left/right screen corners (menu bar and Control Center territory) never trigger.
+- **Works without a notch** — non-notch Macs and external displays automatically fall back to a top floating capsule that appears when the mouse nears the top edge; on multi-display setups the panel opens on the screen the mouse is on.
 
 ## Download & Installation
 
-### System Requirements
+### Requirements
 
 - macOS 15.0 or later
 - No system permissions required
 
-### Option 1: Download the DMG (regular users)
+### Download
 
-1. Download [`Repaste-V0.1.dmg`](Repaste-V0.1.dmg) (~2 MB, served directly from this repository)
-2. Double-click to mount the DMG, then drag **Repaste** into the Applications folder
-3. Open Repaste from Applications
+Grab the latest archive (e.g. `Repaste-v0.1.1.zip`) from **[Releases](https://github.com/VincentPhoton/Repaste/releases)**:
 
-> This build is distributed for developers and is not signed with a paid Apple Developer certificate. On first launch, macOS may show "cannot be opened because it is from an unidentified developer", "cannot verify the developer", or "cannot check it for malicious software". This is the normal Gatekeeper block for unsigned apps; allow it via any of the following:
->
-> 1. **System Settings**: System Settings -> Privacy & Security -> Security, scroll to the bottom and click "Open Anyway".
-> 2. **Right-click open**: Find Repaste in the Applications folder in Finder, right-click -> Open, then click "Open" in the confirmation dialog.
-> 3. **Remove the quarantine attribute in Terminal**:
->    ```bash
->    xattr -cr /Applications/Repaste.app
->    ```
->    Then double-click to open it again.
+1. Unzip and drag **Repaste.app** into the Applications folder
+2. Open Repaste from Applications
 
-### First Launch
+> This version is distributed for developers and is not signed with a paid Apple Developer certificate (same as the original). On first launch, macOS may show "cannot be opened because the developer cannot be verified" — the normal gatekeeper block for unsigned apps. Allow it via: System Settings → Privacy & Security → click "Open Anyway"; or right-click the app → Open → Open; or run `xattr -cr /Applications/Repaste.app` in Terminal.
 
-A short onboarding guide appears on first launch:
+### Build from Source (Developers)
 
-| Step | Content |
-| --- | --- |
-| 1. Welcome to Repaste | Choose the default tab shown when opening the history |
-| 2. Privacy & local storage | All records stay on this Mac; password-like content is skipped automatically |
-| 3. Give it a try | Slide the mouse to the notch at the top of the screen; done once the panel appears (skippable) |
-
-Onboarding never asks for any system permissions. In the default mode, selecting an entry writes it back to the clipboard — just press `⌘V` in any app to paste.
-
-Only if you enable "Paste directly into the active app" (auto-paste) in Settings will you be prompted for Accessibility permission: go to **System Settings -> Privacy & Security -> Accessibility** and toggle **Repaste** on. Declining simply falls back to the default copy-only behavior.
-
-### Option 2: Build from Source (developers)
-
-Requirements: Xcode 16+, macOS 15+ SDK. The project has **zero third-party dependencies** — no Swift Package / CocoaPods resolution needed.
+Requires Xcode 16+ and the macOS 15+ SDK. Zero third-party dependencies — no Swift Package / CocoaPods resolution needed.
 
 ```bash
-git clone https://github.com/klosexf/Repaste.git
+git clone https://github.com/VincentPhoton/Repaste.git
 cd Repaste
-open Repaste/Repaste.xcodeproj   # Press ⌘R in Xcode to run
+open Repaste/Repaste.xcodeproj   # ⌘R in Xcode to run
 ```
 
-Or build from the command line:
+### First Run
 
-```bash
-xcodebuild -project Repaste/Repaste.xcodeproj -scheme Repaste build
-```
+A short onboarding guides you: welcome → privacy & local storage → try hovering the notch. No system permissions are requested; by default selecting an entry writes it back to the clipboard — press `⌘V` in any app to paste. Only if you enable "Paste into the active app" in Settings will Accessibility permission be requested; declining falls back to copy-only mode.
 
-## Keyboard Shortcuts
+## Shortcuts
 
 | Key | Action |
 | --- | --- |
 | `⌥⇧V` | Show / hide the panel |
 | `↑` `↓` | Select entry |
-| `⏎` | Use (writes to clipboard, panel closes) |
+| `⏎` | Use (write back to clipboard, dismiss) |
 | `⌘⏎` | Open link |
 | `⌘G` | Save to template group |
 | `⌫` | Delete entry |
-| `esc` | Close panel |
+| `esc` | Close the panel |
 
 ## Privacy
 
-- **Fully local storage** — no account, no upload, no sync; history and images never leave your Mac
-- **Passwords skipped automatically** — password-type content (ConcealedType) copied from 1Password / Keychain is never stored
-- **Zero permissions by default** — no system authorization required; only the optional "paste into the active app" feature needs Accessibility
-- **You control the data** — images are purged automatically after 7 days (TTL); view the storage overview, clear history or images in Settings
+- **Fully local storage** — no login, no upload, no sync; history and images stay on your machine
+- **Passwords auto-skipped** — concealed content copied from password managers (1Password, Keychain, etc.) is never stored
+- **Zero permissions by default** — only the optional "Paste into the active app" requires Accessibility
+- **Data under control** — images auto-clean after 7 days (TTL); view storage overview or clear history/images in Settings
+
+## Improvements in This Fork
+
+Compared with upstream [klosexf/Repaste](https://github.com/klosexf/Repaste):
+
+**Performance**
+- Event log writes moved to a background serial queue: no main-thread disk blocking on every click / capture
+- Thread-safe memory caches for images and source icons: no repeated decoding while scrolling or reopening previews
+- List thumbnails and preview images decode in the background: smooth scrolling, no dropped frames on large images
+
+**Features**
+- New **"Visible rows"** setting (1–5): the panel shows a fixed N rows and scrolls inside the list, like a web page
+- New **"Source attribution enhancement"** setting (off by default): when a screenshot tool grabs focus, images are attributed to the app you were using before it
+- **Instant hover tooltips** (~0.12s, cursor-following) on the settings `?` icon and the panel's "Unknown source" labels, guiding users to the enhancement setting
+
+**Fixes**
+- Fast notch entry now triggers reliably (deeper hot zone + cursor-position polling fallback)
+- White line at the panel's top edge (window-shadow compositing artifact): shadow disabled + panel top raised off-screen, keeping bottom/side depth
+- ⋮ menu no longer hidden by the notch: the panel reserves transparent space for the menu (menu overlays the app below — no black block, no dark frame), and every row is fully visible
+- Source attribution withstands transient screenshot-tool activation (capcap and similar background tools attribute to the current frontmost app)
+- The panel is a rounded rectangle from the very first summon (transparent-window first-frame square issue solved via a layer corner mask)
 
 ## Technical Architecture
 
-Pure native macOS development: SwiftUI builds the UI, AppKit hosts the windows (the main panel is a borderless NSPanel that never steals focus).
+Pure native macOS: SwiftUI for UI, AppKit for windows (the main panel is a borderless NSPanel that never steals focus).
 
 | Layer | Technology |
 | --- | --- |
 | UI views | SwiftUI (panel, cards, settings, onboarding) |
-| Window layer | AppKit (NSPanel / NSWindow) |
-| Data layer | SwiftData (Clip / TemplateGroup, backed by SQLite) + UserDefaults |
+| Window layer | AppKit (NSPanel / NSWindow / global tooltip panel) |
+| Data layer | SwiftData (Clip / TemplateGroup on SQLite) + UserDefaults |
 | State management | Observation (`@Observable`) |
-| Global hotkey | Carbon RegisterEventHotKey (zero permissions) |
-| Clipboard polling | NSPasteboard.changeCount polling (idle CPU ≈ 0) |
-| Dependencies | None |
-
-```text
-Repaste/
-├── RepasteApp.swift            # App entry & window bridge
-├── DesignTokens.swift          # Design system (matte black + brand purple)
-├── Models/                     # SwiftData models: Clip, TemplateGroup
-├── Services/                   # Clipboard engine
-│   ├── ClipboardMonitor.swift  #   Capture, type detection, 200-entry eviction, password skip
-│   ├── ClipboardStore.swift    #   History queries, filtering, pinning, deletion
-│   ├── ImageStore.swift        #   Image persistence & TTL cleanup
-│   ├── AutoPaster.swift        #   Paste into frontmost app (optional, needs Accessibility)
-│   └── SettingsStore.swift     #   Settings (applied instantly)
-├── Panel/                      # Main panel (shared by notch dropdown & hotkey summon)
-│   ├── PanelView.swift         #   Search, tabs, source bar, card list
-│   └── ClipMoreMenu.swift      #   ⋮ menu (composed per content type)
-├── Settings/                   # Settings window: General / Summon / History & Privacy
-├── Onboarding/                 # First-launch onboarding (3 steps, zero permissions)
-└── Summon/                     # Summon system
-    ├── HotZoneWatcher.swift    #   Notch hot-zone state machine (anti-false-trigger core)
-    ├── HotKeyManager.swift     #   ⌥⇧V global hotkey
-    └── CapsuleController.swift #   Capsule fallback for non-notch / external screens
-```
+| Global hotkey | Carbon RegisterEventHotKey (no permissions) |
+| Clipboard monitoring | NSPasteboard.changeCount polling (≈0 idle CPU) |
+| Third-party dependencies | None |
 
 ## Roadmap
 
-- [ ] iCloud / multi-device sync
-- [ ] Template variables & placeholders (`{{date}}`, `{{clipboard}}`)
-- [ ] Right-click context menus & batch actions
+- [ ] Settings import / export and "Reset to defaults"
+- [ ] Localization (Simplified Chinese / English)
+- [ ] Template variables and placeholders (`{{date}}`, `{{clipboard}}`)
 - [ ] Link preview cards (title & thumbnail)
-- [ ] Image OCR, drag-out of the panel
-- [ ] Sparkle auto-update
+- [ ] Image OCR, drag-to-export out of the panel
+- [ ] Code signing + notarization + Sparkle auto-update
+- [ ] iCloud / multi-device sync
+
+## Dependencies
+
+Zero third-party dependencies.
 
 ## License
 
-[MIT](LICENSE) © 2026 陈晓峰
+[MIT](LICENSE) · Original © 2026 陈晓峰 ([klosexf/Repaste](https://github.com/klosexf/Repaste)) · This fork maintained by [VincentPhoton](https://github.com/VincentPhoton)
 
 ---
 
-<p align="center">Hover the notch, and give it a try.</p>
+<p align="center">Hover the notch and give it a try.</p>

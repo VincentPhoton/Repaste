@@ -50,8 +50,11 @@ final class HotZoneWatcher: NSObject {
 
     /// 热区左右外扩（pt）
     private static let hotZoneSideMargin: CGFloat = 40
-    /// 热区顶部下探深度（pt，覆盖整个刘海高度，鼠标在刘海任意位置停留均可触发）
-    private static let hotZoneDepth: CGFloat = 40
+    /// 热区顶部下探深度（pt）。需覆盖「把鼠标滑进刘海并停稳」时光标的自然落点/抖动区间：
+    /// 实测光标扫过顶部时会在约 898–982 之间快速上下（扫过热区但不停留），且停在刘海下方约 40pt。
+    /// 40/64pt 时下边界都够不到实际落点，导致快丢不触发。取 96 使下边界到 y≈886，
+    /// 覆盖实测的 898–982 活动区间并留余量；仍不深入内容区，配合左右上角抑制避免误触。
+    private static let hotZoneDepth: CGFloat = 96
     /// 屏幕左右上角抑制范围（pt；Apple 菜单与控制中心领地，永不触发）
     private static let cornerSuppressSpan: CGFloat = 120
     /// 「鼠标在面板上」判定容差（pt，面板 frame 四周外扩）
@@ -442,8 +445,10 @@ final class HotZoneWatcher: NSObject {
         return CGRect(
             x: notchMinX - Self.hotZoneSideMargin,
             y: screen.frame.maxY - Self.hotZoneDepth,
+            // 高度 +1：CGRect.contains 为半开区间 [min, max)，光标恰在屏幕最上沿（y==frame.maxY）
+            // 时会被判为带外；+1 使上沿点含入，避免「贴顶不触发」。
             width: (notchMaxX - notchMinX) + Self.hotZoneSideMargin * 2,
-            height: Self.hotZoneDepth
+            height: Self.hotZoneDepth + 1
         )
     }
 

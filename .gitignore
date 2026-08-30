@@ -40,3 +40,6 @@ verify-promo.js
 
 # 临时文件
 .tmp*
+
+# 本地开发记录（仅本地保留，不推送）
+PROJECT_STATUS.md

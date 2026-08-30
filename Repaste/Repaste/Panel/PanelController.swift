@@ -103,6 +103,10 @@ final class PanelController {
     /// 防止渐隐期间被重新展示的面板被旧回调误 orderOut）
     private var showGeneration = 0
 
+    /// notch 模式面板顶部超出屏幕顶的距离（pt）：把窗口顶边与阴影抬到屏幕外，
+    /// 既保留底部/两侧阴影的层次感，又避免顶边贴屏时窗口阴影合成出的细亮边
+    private static let notchTopOverhang: CGFloat = 24
+
     /// Workspace 通知 token（Space 切换 / 显示器唤醒时重同步面板）
     private var workspaceTokens: [any NSObjectProtocol] = []
     /// NotificationCenter 通知 token（屏幕布局变化时重同步面板）
@@ -125,9 +129,9 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // 阴影在顶边贴屏幕顶（frame.maxY）时会在顶部形成一条细亮边（截屏实证），
-        // 且对哑光纯黑设计贡献有限；关闭以避免顶边白色细线。
-        panel.hasShadow = false
+        // 阴影默认开启，保留面板底部/两侧的层次感；顶边白线隐患由 notchTopOverhang
+        // 解决（面板顶部延伸到屏幕外）：窗口顶边与阴影被移到屏外，可见顶边是纯黑内容
+        panel.hasShadow = true
         panel.hidesOnDeactivate = false
 
         let hostingView = NSHostingView(rootView: PanelView(viewModel: viewModel))
@@ -163,8 +167,11 @@ final class PanelController {
         currentMode = mode
         currentScreen = screen
         viewModel.isNotchMode = (mode == .notch)
-        // notch 模式顶边贴合屏幕顶，头部行需下移一个菜单栏 / 刘海高度避开刘海
-        viewModel.notchTopInset = (mode == .notch) ? screen.frame.maxY - screen.visibleFrame.maxY : 0
+        // notch 模式面板顶部延伸到屏幕外（notchTopOverhang），头部行需下移
+        // 菜单栏 / 刘海高度 + 超出量，保证内容仍从菜单栏下沿开始
+        viewModel.notchTopInset = (mode == .notch)
+            ? (screen.frame.maxY - screen.visibleFrame.maxY) + Self.notchTopOverhang
+            : 0
 
         // 恢复设置（tab / 来源筛选）、清空搜索、重置键盘选中、刷新数据快照
         viewModel.prepareForDisplay()
@@ -305,10 +312,11 @@ final class PanelController {
         let origin: CGPoint
         switch currentMode {
         case .notch:
-            // 顶部居中，顶边贴合屏幕顶（与刘海同高，视觉从菜单栏下沿垂下）
+            // 顶部居中，面板顶部延伸到屏幕顶上方（notchTopOverhang）：
+            // 窗口顶边与阴影在屏外不可见，可见顶边为纯黑内容，底部/两侧阴影保留层次感
             origin = CGPoint(
                 x: screen.frame.midX - size.width / 2,
-                y: screen.frame.maxY - size.height
+                y: screen.frame.maxY - size.height + Self.notchTopOverhang
             )
         case .centered:
             // 屏幕水平垂直居中

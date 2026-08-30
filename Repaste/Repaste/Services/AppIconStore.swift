@@ -21,6 +21,10 @@ final class AppIconStore {
     /// 图标渲染尺寸（32×32）
     private static let iconSize: CGFloat = 32
 
+    /// 内存缓存：解码后的 NSImage 按文件名缓存（NSCache 线程安全，主线程 load 与后台解码共用）。
+    /// 避免同一来源 App 的多行/反复滚动时对同一图标文件反复解码。
+    nonisolated(unsafe) private static let cache = NSCache<NSString, NSImage>()
+
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         root = support.appendingPathComponent("Repaste/icons", isDirectory: true)
@@ -51,15 +55,31 @@ final class AppIconStore {
         guard let data = Self.pngData(from: icon, size: Self.iconSize) else { return nil }
         do {
             try data.write(to: cachedURL)
+            // 新文件写盘后清掉该 key 的缓存，避免后续 load 命中旧的解码结果
+            Self.cache.removeObject(forKey: fileName as NSString)
             return fileName
         } catch {
             return nil // 写盘失败静默：UI 显示未知图标
         }
     }
 
-    /// 加载缓存图标
+    /// 磁盘解码图标并走内存缓存（线程安全；主线程 load 与后台解码均可调用）
+    nonisolated static func decodeCached(fileName: String, url: URL) -> NSImage? {
+        let key = fileName as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// 图标文件完整 URL
+    func fileURL(fileName: String) -> URL {
+        root.appendingPathComponent(fileName)
+    }
+
+    /// 加载缓存图标（命中内存缓存避免重复解码）
     func load(fileName: String) -> NSImage? {
-        NSImage(contentsOf: root.appendingPathComponent(fileName))
+        Self.decodeCached(fileName: fileName, url: root.appendingPathComponent(fileName))
     }
 
     // MARK: 私有

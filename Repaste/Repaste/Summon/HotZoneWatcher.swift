@@ -50,14 +50,20 @@ final class HotZoneWatcher: NSObject {
 
     /// 热区左右外扩（pt）
     private static let hotZoneSideMargin: CGFloat = 40
-    /// 热区顶部下探深度（pt，覆盖整个刘海高度，鼠标在刘海任意位置停留均可触发）
-    private static let hotZoneDepth: CGFloat = 40
+    /// 热区顶部下探深度（pt）。需覆盖「把鼠标滑进刘海并停稳」时光标的自然落点/抖动区间：
+    /// 实测光标扫过顶部时会在约 898–982 之间快速上下（扫过热区但不停留），且停在刘海下方约 40pt。
+    /// 40/64pt 时下边界都够不到实际落点，导致快丢不触发。取 96 使下边界到 y≈886，
+    /// 覆盖实测的 898–982 活动区间并留余量；仍不深入内容区，配合左右上角抑制避免误触。
+    private static let hotZoneDepth: CGFloat = 96
     /// 屏幕左右上角抑制范围（pt；Apple 菜单与控制中心领地，永不触发）
     private static let cornerSuppressSpan: CGFloat = 120
     /// 「鼠标在面板上」判定容差（pt，面板 frame 四周外扩）
     private static let panelTolerance: CGFloat = 12
     /// 离开收起检测轮询间隔（60Hz）
     private static let pollInterval: TimeInterval = 1.0 / 60.0
+    /// 光标位置兜底轮询间隔（30Hz）：mouseMoved 在快速移动时事件稀疏，可能整段跳过薄热区，
+    /// 且光标带在热区内静止时不产生任何事件；此轮询兜底，保证「鼠标在刘海任意位置停留」都能可靠触发。
+    private static let cursorPollInterval: TimeInterval = 1.0 / 30.0
     /// 全屏检测结果缓存时长（避免 mouseMoved 高频触发 CGWindowList 拷贝）
     private static let fullscreenCacheTTL: TimeInterval = 0.5
 
@@ -81,6 +87,8 @@ final class HotZoneWatcher: NSObject {
     private var outsideSince: Date?
     /// 离开收起检测定时器（面板悬停展开期间以 60Hz 运行）
     private var pollTimer: Timer?
+    /// 光标位置兜底轮询定时器（hover 开启期间持续运行，30Hz）
+    private var cursorPollTimer: Timer?
 
     /// 鼠标按下计数（global/local monitor 按下与抬起配对加减；> 0 = 拖拽中，抑制触发）
     private var pressedButtons = 0
@@ -201,6 +209,8 @@ final class HotZoneWatcher: NSObject {
             self?.handleButtonEvent(event)
             return event
         }
+        // 启动光标兜底轮询：补齐 mouseMoved 事件稀疏 / 静止时的漏检
+        startCursorPoll()
     }
 
     /// 卸载事件监听
@@ -209,6 +219,7 @@ final class HotZoneWatcher: NSObject {
         if let token = globalPressToken { NSEvent.removeMonitor(token); globalPressToken = nil }
         if let token = localMoveToken { NSEvent.removeMonitor(token); localMoveToken = nil }
         if let token = localPressToken { NSEvent.removeMonitor(token); localPressToken = nil }
+        stopCursorPoll()
     }
 
     // MARK: 事件处理
@@ -332,6 +343,35 @@ final class HotZoneWatcher: NSObject {
         outsideSince = nil
     }
 
+    // MARK: 光标位置兜底轮询
+
+    /// 启动光标位置兜底轮询（30Hz）：见 cursorPollInterval 注释
+    private func startCursorPoll() {
+        stopCursorPoll()
+        let timer = Timer(
+            timeInterval: Self.cursorPollInterval,
+            target: self,
+            selector: #selector(cursorPollTick),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        cursorPollTimer = timer
+    }
+
+    /// 停止光标位置兜底轮询
+    private func stopCursorPoll() {
+        cursorPollTimer?.invalidate()
+        cursorPollTimer = nil
+    }
+
+    /// 光标位置兜底轮询触发：与 mouseMoved 事件共用同一状态机（读 NSEvent.mouseLocation），
+    /// 覆盖「快速移动事件稀疏跳过热区」与「光标带在热区内静止无事件」两类漏检。
+    /// 面板展开期间由 evaluateEntry 的 isPanelVisible 守卫避免重复触发，无副作用。
+    @objc private func cursorPollTick() {
+        handleMouseMoved()
+    }
+
     /// 60Hz 检测：面板可见且鼠标在面板 frame（+12pt 容差）外连续 leaveDelay → 收起并进入冷却
     @objc private func pollTick() {
         // 面板已被其他途径关闭（如面板内 Esc / 程序调用 hide）：停表并进入冷却兜底
@@ -405,8 +445,10 @@ final class HotZoneWatcher: NSObject {
         return CGRect(
             x: notchMinX - Self.hotZoneSideMargin,
             y: screen.frame.maxY - Self.hotZoneDepth,
+            // 高度 +1：CGRect.contains 为半开区间 [min, max)，光标恰在屏幕最上沿（y==frame.maxY）
+            // 时会被判为带外；+1 使上沿点含入，避免「贴顶不触发」。
             width: (notchMaxX - notchMinX) + Self.hotZoneSideMargin * 2,
-            height: Self.hotZoneDepth
+            height: Self.hotZoneDepth + 1
         )
     }
 

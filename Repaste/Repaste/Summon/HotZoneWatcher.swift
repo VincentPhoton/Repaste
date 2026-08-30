@@ -50,11 +50,11 @@ final class HotZoneWatcher: NSObject {
 
     /// 热区左右外扩（pt）
     private static let hotZoneSideMargin: CGFloat = 40
-    /// 热区顶部下探深度（pt）。需覆盖「把鼠标滑进刘海并停稳」时光标的自然落点/抖动区间：
-    /// 实测光标扫过顶部时会在约 898–982 之间快速上下（扫过热区但不停留），且停在刘海下方约 40pt。
-    /// 40/64pt 时下边界都够不到实际落点，导致快丢不触发。取 96 使下边界到 y≈886，
-    /// 覆盖实测的 898–982 活动区间并留余量；仍不深入内容区，配合左右上角抑制避免误触。
-    private static let hotZoneDepth: CGFloat = 96
+    /// 待定阶段的退出容差（pt）：已进入热区（刘海带）后，光标短暂下移落到略低于热区
+    /// 的位置（快速滑入后停稳的自然落点）不取消待定；只有明显远离热区（超出容差）才取消。
+    /// 该容差替代「加深热区」方案——热区本身只覆盖菜单栏/刘海带（见 notchHotZone），
+    /// 不会侵入最大化浏览器工具栏等下方内容区造成误触发。
+    private static let pendingExitTolerance: CGFloat = 60
     /// 屏幕左右上角抑制范围（pt；Apple 菜单与控制中心领地，永不触发）
     private static let cornerSuppressSpan: CGFloat = 120
     /// 「鼠标在面板上」判定容差（pt，面板 frame 四周外扩）
@@ -231,8 +231,9 @@ final class HotZoneWatcher: NSObject {
         case .collapsed:
             evaluateEntry(at: location)
         case .pending:
-            // threshold 内离开热区 → 立即回收起
-            if hotZone(at: location) == nil {
+            // 待定期间：明显离开热区（超出下沿容差 / 移出横向范围）才回收起；
+            // 短暂下移落在热区略下方（快速滑入后停稳的落点）不取消
+            if pendingZone(at: location) == nil {
                 cancelPending()
             }
         }
@@ -284,12 +285,12 @@ final class HotZoneWatcher: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + threshold, execute: work)
     }
 
-    /// 待定到点复核：仍在热区且无抑制 → 展开面板（该屏、notch 位置）
+    /// 待定到点复核：仍在热区（或容差内）且无抑制 → 展开面板（该屏、notch 位置）
     private func confirmPending() {
         guard phase == .pending else { return }
         pendingWork = nil
         let location = NSEvent.mouseLocation
-        guard let zone = hotZone(at: location),
+        guard let zone = pendingZone(at: location),
               !isAnyButtonPressed,
               !(settings.suppressFullscreen && frontmostAppIsFullscreen(on: zone.screen)),
               !isInSuppressedCorner(location, screen: zone.screen) else {
@@ -430,7 +431,9 @@ final class HotZoneWatcher: NSObject {
         }
     }
 
-    /// 计算某屏的刘海热区：刘海宽度 + 左右各 40pt、顶部下探覆盖整个刘海高度。
+    /// 计算某屏的刘海热区：刘海宽度 + 左右各 40pt、顶部下探深度 = 菜单栏高度
+    /// （刘海所在区域）。只覆盖屏幕最顶部的菜单栏/刘海带，**不深入下方内容区**——
+    /// 否则最大化浏览器时，地址栏/标签页所在区域（菜单栏下方 ~30-100pt）会被误判为热区。
     /// 刘海判定：safeAreaInsets.top > 0；刘海左右沿由 auxiliaryTopLeftArea.maxX 与
     /// auxiliaryTopRightArea.minX 推算。无刘海屏返回 nil。
     private func notchHotZone(for screen: NSScreen) -> CGRect? {
@@ -442,13 +445,15 @@ final class HotZoneWatcher: NSObject {
         let notchMinX = left.maxX
         let notchMaxX = right.minX
         guard notchMaxX > notchMinX else { return nil }
+        // 热区深度 = 菜单栏高度（每屏计算）；保底 20pt 防异常屏幕
+        let depth = max(screen.frame.maxY - screen.visibleFrame.maxY, 20)
         return CGRect(
             x: notchMinX - Self.hotZoneSideMargin,
-            y: screen.frame.maxY - Self.hotZoneDepth,
+            y: screen.frame.maxY - depth,
             // 高度 +1：CGRect.contains 为半开区间 [min, max)，光标恰在屏幕最上沿（y==frame.maxY）
             // 时会被判为带外；+1 使上沿点含入，避免「贴顶不触发」。
             width: (notchMaxX - notchMinX) + Self.hotZoneSideMargin * 2,
-            height: Self.hotZoneDepth + 1
+            height: depth + 1
         )
     }
 
@@ -465,6 +470,20 @@ final class HotZoneWatcher: NSObject {
     private func hotZone(at point: NSPoint) -> (screen: NSScreen, rect: CGRect)? {
         for zone in hotZones where zone.rect.contains(point) {
             return zone
+        }
+        return nil
+    }
+
+    /// 待定阶段的宽容命中：热区本身命中，或位于某热区「下沿容差内」（快速滑入后停稳的落点）
+    private func pendingZone(at point: NSPoint) -> (screen: NSScreen, rect: CGRect)? {
+        if let zone = hotZone(at: point) { return zone }
+        for zone in hotZones {
+            // x 在热区横向范围内，且 y 不低于热区下沿 - 容差（允许停稳落点略低于热区）
+            if point.x >= zone.rect.minX, point.x <= zone.rect.maxX,
+               point.y >= zone.rect.minY - Self.pendingExitTolerance,
+               point.y <= zone.rect.maxY {
+                return zone
+            }
         }
         return nil
     }

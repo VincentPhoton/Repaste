@@ -34,5 +34,9 @@ verify-promo.js
 # Trae IDE 配置
 .trae/
 
+# 本机会话工具产物（不推送）
+.dsh-vision-router/
+.mnemon/
+
 # 临时文件
 .tmp*

@@ -139,6 +139,8 @@ final class PanelController {
 
         self.panel = panel
         self.hostingView = hostingView
+        // 首次展示前强制完成一次布局，使首次呼出时 fittingSize 准确（见 computePanelFrame）
+        hostingView.layoutSubtreeIfNeeded()
 
         // 首次渲染即有数据（避免首次展示闪空态）
         viewModel.reload()
@@ -303,6 +305,10 @@ final class PanelController {
 
     /// 计算面板目标 frame（宽度固定 500，高度内容自适应；notch 顶部居中贴合屏幕顶 / centered 屏幕居中）
     private func computePanelFrame(screen: NSScreen) -> NSRect {
+        // 先强制当前 hosting 视图完成布局：首次呼出时视图尚未显示过，
+        // fittingSize 可能给出过小值（空态等撑满型内容会按未布局态量出偏矮高度），
+        // 导致第一次打开面板偏矮、第二次才正常。强制布局后 fittingSize 才准确。
+        hostingView.layoutSubtreeIfNeeded()
         // fittingSize 由 SwiftUI 内容理想尺寸得出（宽度固定 500，列表区受 maxHeight 约束）
         let fitting = hostingView.fittingSize
         let height = min(max(fitting.height, 180), maxHeight(for: screen))

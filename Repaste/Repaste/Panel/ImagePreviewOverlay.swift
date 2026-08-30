@@ -135,18 +135,30 @@ struct ImagePreviewOverlay: View {
 
     // MARK: 加载
 
-    /// 加载图片：优先原图；原图已被 TTL 清理则降级加载缩略图
+    /// 加载图片：优先原图；原图已被 TTL 清理则降级加载缩略图（磁盘解码放到后台，避免打开预览时阻塞主线程）
     private func loadImage() {
         guard let ref = clip.payloadRef else {
             originalAvailable = false
             return
         }
-        if ImageStore.shared.hasOriginal(name: ref) {
-            image = ImageStore.shared.load(name: ref)
-            originalAvailable = true
-        } else {
-            image = ImageStore.shared.load(name: ImageStore.thumbName(for: ref))
-            originalAvailable = false
+        let origName = ref
+        let origURL = ImageStore.shared.fileURL(name: origName)
+        Task {
+            if ImageStore.shared.hasOriginal(name: origName) {
+                let image = await Task.detached {
+                    ImageStore.decodeCached(fileName: origName, url: origURL)
+                }.value
+                self.image = image
+                self.originalAvailable = true
+            } else {
+                let thumbName = ImageStore.thumbName(for: origName)
+                let thumbURL = ImageStore.shared.fileURL(name: thumbName)
+                let image = await Task.detached {
+                    ImageStore.decodeCached(fileName: thumbName, url: thumbURL)
+                }.value
+                self.image = image
+                self.originalAvailable = false
+            }
         }
     }
 }

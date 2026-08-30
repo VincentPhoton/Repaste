@@ -63,13 +63,23 @@ final class AppIconStore {
         }
     }
 
+    /// 磁盘解码图标并走内存缓存（线程安全；主线程 load 与后台解码均可调用）
+    nonisolated static func decodeCached(fileName: String, url: URL) -> NSImage? {
+        let key = fileName as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// 图标文件完整 URL
+    func fileURL(fileName: String) -> URL {
+        root.appendingPathComponent(fileName)
+    }
+
     /// 加载缓存图标（命中内存缓存避免重复解码）
     func load(fileName: String) -> NSImage? {
-        let key = fileName as NSString
-        if let cached = Self.cache.object(forKey: key) { return cached }
-        guard let image = NSImage(contentsOf: root.appendingPathComponent(fileName)) else { return nil }
-        Self.cache.setObject(image, forKey: key)
-        return image
+        Self.decodeCached(fileName: fileName, url: root.appendingPathComponent(fileName))
     }
 
     // MARK: 私有

@@ -58,6 +58,9 @@ final class HotZoneWatcher: NSObject {
     private static let panelTolerance: CGFloat = 12
     /// 离开收起检测轮询间隔（60Hz）
     private static let pollInterval: TimeInterval = 1.0 / 60.0
+    /// 光标位置兜底轮询间隔（30Hz）：mouseMoved 在快速移动时事件稀疏，可能整段跳过薄热区，
+    /// 且光标带在热区内静止时不产生任何事件；此轮询兜底，保证「鼠标在刘海任意位置停留」都能可靠触发。
+    private static let cursorPollInterval: TimeInterval = 1.0 / 30.0
     /// 全屏检测结果缓存时长（避免 mouseMoved 高频触发 CGWindowList 拷贝）
     private static let fullscreenCacheTTL: TimeInterval = 0.5
 
@@ -81,6 +84,8 @@ final class HotZoneWatcher: NSObject {
     private var outsideSince: Date?
     /// 离开收起检测定时器（面板悬停展开期间以 60Hz 运行）
     private var pollTimer: Timer?
+    /// 光标位置兜底轮询定时器（hover 开启期间持续运行，30Hz）
+    private var cursorPollTimer: Timer?
 
     /// 鼠标按下计数（global/local monitor 按下与抬起配对加减；> 0 = 拖拽中，抑制触发）
     private var pressedButtons = 0
@@ -201,6 +206,8 @@ final class HotZoneWatcher: NSObject {
             self?.handleButtonEvent(event)
             return event
         }
+        // 启动光标兜底轮询：补齐 mouseMoved 事件稀疏 / 静止时的漏检
+        startCursorPoll()
     }
 
     /// 卸载事件监听
@@ -209,6 +216,7 @@ final class HotZoneWatcher: NSObject {
         if let token = globalPressToken { NSEvent.removeMonitor(token); globalPressToken = nil }
         if let token = localMoveToken { NSEvent.removeMonitor(token); localMoveToken = nil }
         if let token = localPressToken { NSEvent.removeMonitor(token); localPressToken = nil }
+        stopCursorPoll()
     }
 
     // MARK: 事件处理
@@ -330,6 +338,35 @@ final class HotZoneWatcher: NSObject {
         pollTimer?.invalidate()
         pollTimer = nil
         outsideSince = nil
+    }
+
+    // MARK: 光标位置兜底轮询
+
+    /// 启动光标位置兜底轮询（30Hz）：见 cursorPollInterval 注释
+    private func startCursorPoll() {
+        stopCursorPoll()
+        let timer = Timer(
+            timeInterval: Self.cursorPollInterval,
+            target: self,
+            selector: #selector(cursorPollTick),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        cursorPollTimer = timer
+    }
+
+    /// 停止光标位置兜底轮询
+    private func stopCursorPoll() {
+        cursorPollTimer?.invalidate()
+        cursorPollTimer = nil
+    }
+
+    /// 光标位置兜底轮询触发：与 mouseMoved 事件共用同一状态机（读 NSEvent.mouseLocation），
+    /// 覆盖「快速移动事件稀疏跳过热区」与「光标带在热区内静止无事件」两类漏检。
+    /// 面板展开期间由 evaluateEntry 的 isPanelVisible 守卫避免重复触发，无副作用。
+    @objc private func cursorPollTick() {
+        handleMouseMoved()
     }
 
     /// 60Hz 检测：面板可见且鼠标在面板 frame（+12pt 容差）外连续 leaveDelay → 收起并进入冷却

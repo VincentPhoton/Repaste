@@ -23,6 +23,13 @@ enum EventLog {
     /// ISO8601 时间格式化器
     private static let formatter = ISO8601DateFormatter()
 
+    /// 后台串行队列：磁盘追加写不在主线程执行，避免每次鼠标点击 / 剪贴板入库都同步阻塞主线程。
+    /// 串行保证写入顺序；日志为最佳努力诊断数据，异步写入不改变任何应用行为。
+    private static let queue = DispatchQueue(
+        label: "com.xiaofengchen.Repaste.eventlog",
+        qos: .utility
+    )
+
     /// 追加一条事件（写失败静默忽略，绝不影响主流程）
     /// - Parameters:
     ///   - event: 事件名（使用下方预定义常量）
@@ -40,17 +47,22 @@ enum EventLog {
         var line = data
         line.append(0x0A) // 行尾换行
 
-        // 追加写；文件不存在则创建
-        if let handle = FileHandle(forWritingAtPath: fileURL.path) {
-            defer { try? handle.close() }
-            do {
-                try handle.seekToEnd()
-                try handle.write(contentsOf: line)
-            } catch {
-                // 静默忽略
+        // 在主线程先取好文件 URL 与队列引用，再切后台队列执行磁盘写（行为与原先一致，仅不阻塞主线程）
+        let url = fileURL
+        let queue = Self.queue
+        queue.async {
+            // 追加写；文件不存在则创建
+            if let handle = FileHandle(forWritingAtPath: url.path) {
+                defer { try? handle.close() }
+                do {
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: line)
+                } catch {
+                    // 静默忽略
+                }
+            } else {
+                try? line.write(to: url)
             }
-        } else {
-            try? line.write(to: fileURL)
         }
     }
 }

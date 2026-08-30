@@ -40,9 +40,10 @@ final class ClipboardMonitor: NSObject {
     private var lastPollDate = Date()
     /// 最近一次前台 App 切换时刻（来源归因：变化窗口后期发生切换则归因不可靠）
     private var frontmostSwitchDate: Date?
-    /// 最近约 5 秒（10 次轮询）的前台 App bundleId（来源归因「净切换」判断：
-    /// 截图工具等后台 App 瞬态激活又退回时，前台 App 仍在近期历史中，可直接归因）
-    private var lastFrontmostBundleIds: [String?] = []
+    /// 最近约 5 秒（10 次轮询）的前台 App（来源归因「净切换」判断：
+    /// 截图工具等后台 App 瞬态激活又退回时，前台 App 仍在近期历史中，可直接归因；
+    /// 也供来源归因增强查找「当前前台接管前的稳定 App」）
+    private var lastFrontmostApps: [SourceApp?] = []
     /// 应用自己写回剪贴板时记录的 changeCount（防自吞）
     private var externalWriteChangeCount: Int?
 
@@ -165,12 +166,18 @@ final class ClipboardMonitor: NSObject {
         handleChange(pasteboard: pasteboard, since: since)
     }
 
-    /// 记录当前前台 App bundleId（保留最近 10 次轮询 ≈ 5 秒；来源归因「净切换」判断用）
+    /// 记录当前前台 App（保留最近 10 次轮询 ≈ 5 秒；来源归因「净切换」判断用）
     private func recordFrontmost() {
-        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        lastFrontmostBundleIds.append(front)
-        if lastFrontmostBundleIds.count > 10 {
-            lastFrontmostBundleIds.removeFirst()
+        let app = NSWorkspace.shared.frontmostApplication
+        let source: SourceApp?
+        if let app, app.bundleIdentifier != nil || app.localizedName != nil {
+            source = SourceApp(bundleId: app.bundleIdentifier, name: app.localizedName)
+        } else {
+            source = nil
+        }
+        lastFrontmostApps.append(source)
+        if lastFrontmostApps.count > 10 {
+            lastFrontmostApps.removeFirst()
         }
     }
 
@@ -214,7 +221,7 @@ final class ClipboardMonitor: NSObject {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != nil || app.localizedName != nil else { return nil }
         // 前台在近期历史中出现过：未发生净切换（瞬态激活已退回），归因可靠
-        if let front = app.bundleIdentifier, lastFrontmostBundleIds.contains(front) {
+        if let front = app.bundleIdentifier, lastFrontmostApps.contains(where: { $0?.bundleId == front }) {
             return SourceApp(bundleId: app.bundleIdentifier, name: app.localizedName)
         }
         // 前台是新出现的 App（近期未在历史中）：按切换时刻容差判定是否可靠
@@ -223,6 +230,23 @@ final class ClipboardMonitor: NSObject {
             return nil
         }
         return SourceApp(bundleId: app.bundleIdentifier, name: app.localizedName)
+    }
+
+    /// 来源归因增强（设置开启时用于图片类复制）：
+    /// 若当前前台是「近期才出现的新 App」（不在最近 5 秒历史中，如截图工具抢焦点），
+    /// 返回该 App 接管前稳定使用的那个 App（历史中最后一个与当前不同的 App），
+    /// 使图片来源更符合「截图来源」直觉；否则返回 nil（沿用常规归因）。
+    private func captureEnhancedSource() -> SourceApp? {
+        guard let current = NSWorkspace.shared.frontmostApplication,
+              let currentBundle = current.bundleIdentifier else { return nil }
+        // 当前前台在近期历史中（稳定使用中，不是新出现）→ 无需增强
+        if lastFrontmostApps.contains(where: { $0?.bundleId == currentBundle }) { return nil }
+        // 从历史末尾往前找第一个与当前前台不同的 App（= 接管前的稳定 App）
+        for entry in lastFrontmostApps.reversed() {
+            guard let entry else { continue }
+            if entry.bundleId != currentBundle { return entry }
+        }
+        return nil
     }
 
     /// 启动导入当前剪贴板：来源发生在启动前无法归因，记未知
@@ -238,10 +262,19 @@ final class ClipboardMonitor: NSObject {
 
     /// 构建 Clip 并入库（含去重与淘汰）
     private func ingest(content: PasteboardContent, source: SourceApp?) {
+        // 来源归因增强（设置开启 + 图片类）：当前前台若是「近期才出现的新 App」（截图工具抢焦点），
+        // 归因到其接管前的稳定前台 App，使图片来源更符合「截图来源」直觉
+        var resolvedSource = source
+        if SettingsStore.shared.attributionEnhancement,
+           case .image = content,
+           let enhanced = captureEnhancedSource() {
+            resolvedSource = enhanced
+        }
+
         // 来源图标缓存（需要 bundleId 定位 App）
         var iconPath: String? = nil
-        if let bundleId = source?.bundleId {
-            iconPath = AppIconStore.shared.icon(for: bundleId, appName: source?.name ?? bundleId)
+        if let bundleId = resolvedSource?.bundleId {
+            iconPath = AppIconStore.shared.icon(for: bundleId, appName: resolvedSource?.name ?? bundleId)
         }
 
         let clip: Clip
@@ -252,8 +285,8 @@ final class ClipboardMonitor: NSObject {
                 kind: .text,
                 preview: PasteboardReader.previewText(from: text),
                 payloadText: PasteboardReader.truncatedForStorage(text),
-                sourceBundleId: source?.bundleId,
-                sourceAppName: source?.name,
+                sourceBundleId: resolvedSource?.bundleId,
+                sourceAppName: resolvedSource?.name,
                 sourceIconPath: iconPath,
                 byteSize: text.utf8.count,
                 format: isRich ? "rtf" : nil
@@ -264,8 +297,8 @@ final class ClipboardMonitor: NSObject {
                 kind: .link,
                 preview: url,
                 payloadText: url,
-                sourceBundleId: source?.bundleId,
-                sourceAppName: source?.name,
+                sourceBundleId: resolvedSource?.bundleId,
+                sourceAppName: resolvedSource?.name,
                 sourceIconPath: iconPath,
                 byteSize: url.utf8.count
             )
@@ -287,8 +320,8 @@ final class ClipboardMonitor: NSObject {
                 kind: .image,
                 preview: PasteboardReader.suggestedImageFileName(format: format),
                 payloadRef: originalName,
-                sourceBundleId: source?.bundleId,
-                sourceAppName: source?.name,
+                sourceBundleId: resolvedSource?.bundleId,
+                sourceAppName: resolvedSource?.name,
                 sourceIconPath: iconPath,
                 byteSize: data.count,
                 pixelWidth: pixelW,
@@ -302,8 +335,8 @@ final class ClipboardMonitor: NSObject {
                 kind: .file,
                 preview: url.lastPathComponent,
                 payloadText: path,
-                sourceBundleId: source?.bundleId,
-                sourceAppName: source?.name,
+                sourceBundleId: resolvedSource?.bundleId,
+                sourceAppName: resolvedSource?.name,
                 sourceIconPath: iconPath,
                 byteSize: path.utf8.count
             )
@@ -328,7 +361,7 @@ final class ClipboardMonitor: NSObject {
 
         EventLog.track(EventLog.clipCaptured, [
             "kind": clip.kind,
-            "source": source?.bundleId ?? "unknown",
+            "source": resolvedSource?.bundleId ?? "unknown",
             "bytes": String(clip.byteSize),
         ])
         // 广播历史变化（面板可见时实时刷新列表；轮询在主线程，通知同步送达）

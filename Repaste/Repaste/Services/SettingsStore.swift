@@ -24,6 +24,8 @@ enum SettingsKey {
     static let maxItems = "max_items"
     /// 面板列表显示记录条数（1-5；超出部分在列表内滚动）
     static let maxVisibleRows = "max_visible_rows"
+    /// 来源归因增强（图片类复制归因到截图工具出现前的稳定前台 App；默认关，按需开启）
+    static let attributionEnhancement = "attribution_enhancement"
     /// 图片保留天数（原图 TTL，超期删原图、保留缩略图）
     static let imageTtlDays = "image_ttl_days"
     /// 忽略录制的来源 App bundleId 列表
@@ -134,6 +136,15 @@ final class SettingsStore {
         didSet {
             guard oldValue != maxVisibleRows else { return }
             defaults.set(maxVisibleRows, forKey: SettingsKey.maxVisibleRows)
+        }
+    }
+
+    /// 来源归因增强（默认关）：开启后，图片类复制若发生在「近期才出现的前台 App」（如截图工具抢焦点），
+    /// 来源归因到该 App 出现前稳定使用的那个 App（更符合「截图来源」直觉；对保持焦点型截图工具有效）
+    var attributionEnhancement: Bool = false {
+        didSet {
+            guard oldValue != attributionEnhancement else { return }
+            defaults.set(attributionEnhancement, forKey: SettingsKey.attributionEnhancement)
         }
     }
 
@@ -270,6 +281,7 @@ final class SettingsStore {
             SettingsKey.suppressFullscreen: true,
             SettingsKey.maxItems: 200,
             SettingsKey.maxVisibleRows: 5,
+            SettingsKey.attributionEnhancement: false,
             SettingsKey.imageTtlDays: 7,
             SettingsKey.ignoredBundleIds: [String](),
             SettingsKey.defaultBrowser: "system",
@@ -307,6 +319,7 @@ final class SettingsStore {
         suppressFullscreen = defaults.bool(forKey: SettingsKey.suppressFullscreen)
         maxItems = defaults.integer(forKey: SettingsKey.maxItems)
         maxVisibleRows = min(max(defaults.integer(forKey: SettingsKey.maxVisibleRows), 1), 5)
+        attributionEnhancement = defaults.bool(forKey: SettingsKey.attributionEnhancement)
         imageTtlDays = defaults.integer(forKey: SettingsKey.imageTtlDays)
         ignoredBundleIds = defaults.stringArray(forKey: SettingsKey.ignoredBundleIds) ?? []
         defaultBrowser = defaults.string(forKey: SettingsKey.defaultBrowser) ?? "system"

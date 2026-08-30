@@ -580,6 +580,18 @@ struct HistorySettingsCards: View {
                             )
                         )
                     }
+                    // 来源归因增强（高级选项，排后；仅在截图工具占用焦点导致来源不准时按需开启）
+                    SettingsRow(title: "来源归因增强", subtitle: "提升图片截图来源的识别准确度") {
+                        HStack(spacing: 8) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 13))
+                                .foregroundStyle(DT.muted2)
+                                .instantHelpTip("开启后：截图工具截取的图片会归因到「截图前你正在使用的 App」，而不是截图工具本身。\n适用场景：你的截图工具会一直占住焦点，导致图片来源显示为工具自己。\n普通场景无需开启；开启可能让「切到某 App 后立刻复制的图片」误归因到上一个 App。")
+                            MatteToggle(isOn: settings.attributionEnhancement) {
+                                settings.attributionEnhancement.toggle()
+                            }
+                        }
+                    }
                 }
             }
 

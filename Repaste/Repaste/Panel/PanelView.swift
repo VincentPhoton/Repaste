@@ -417,6 +417,11 @@ struct PanelView: View {
                 }
                 Text(title)
                     .lineLimit(1)
+                    .instantHelpTip(
+                        title == "未知来源"
+                            ? "来源未知？可到「设置 → 历史与隐私」开启「来源归因增强」，提升截图来源的识别。"
+                            : ""
+                    )
                 Text("\(count)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(isSelected ? DT.muted2 : DT.muted)

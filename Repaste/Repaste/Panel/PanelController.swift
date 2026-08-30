@@ -139,6 +139,8 @@ final class PanelController {
 
         self.panel = panel
         self.hostingView = hostingView
+        // 首帧防直角：初始 hosting 视图立即应用圆角遮罩
+        applyCornerMask(notch: true)
 
         // 首次渲染即有数据（避免首次展示闪空态）
         viewModel.reload()
@@ -232,6 +234,12 @@ final class PanelController {
         // orderFrontRegardless 不激活 App；成为 key window（nonactivating 不激活 App）确保键盘事件到达
         panel.orderFrontRegardless()
         panel.makeKey()
+        // 首帧防直角：透明窗口首次显示时，SwiftUI 圆角剪裁尚未绘制到窗口表面，
+        // 会先以直角矩形呈现一帧（每个用户首次呼出都会看到）。在 alpha=0 阶段强制
+        // 一次布局与绘制，让淡入首帧即为圆角形状，直角帧永不出现。
+        hostingView.layoutSubtreeIfNeeded()
+        hostingView.displayIfNeeded()
+        panel.displayIfNeeded()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = reduceMotion ? PanelMotion.fadeInDuration : PanelMotion.arriveDuration
             context.timingFunction = PanelMotion.arriveTiming
@@ -379,6 +387,22 @@ final class PanelController {
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
         hostingView = hosting
+        applyCornerMask(notch: viewModel.isNotchMode)
+    }
+
+    /// 在 hosting 层上应用圆角遮罩（notch 仅底部两角圆角 / centered 四角圆角）。
+    /// 层级遮罩随 CALayer 立即生效，不依赖 SwiftUI 首帧异步渲染——
+    /// 否则透明窗口首次挂载时，窗口服务器会按「未绘制内容」把窗口注册为直角矩形，
+    /// 导致每个用户首次呼出面板时先看到方形一帧。
+    private func applyCornerMask(notch: Bool) {
+        hostingView.wantsLayer = true
+        guard let layer = hostingView.layer else { return }
+        layer.masksToBounds = true
+        layer.cornerRadius = DT.panelRadius
+        layer.maskedCorners = notch
+            ? [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            : [.layerMinXMinYCorner, .layerMaxXMinYCorner,
+               .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
     }
 
     // MARK: 悬停收起支持（HotZoneWatcher / CapsuleController / HotKeyManager 使用）

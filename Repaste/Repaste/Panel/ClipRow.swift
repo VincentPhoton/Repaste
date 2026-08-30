@@ -271,6 +271,11 @@ struct ClipRow: View {
                     .foregroundStyle(DT.muted2)
             }
             Text(clip.sourceAppName ?? "未知来源")
+                .instantHelpTip(
+                    clip.sourceAppName == nil
+                        ? "来源未知？可到「设置 → 历史与隐私」开启「来源归因增强」，提升截图来源的识别。"
+                        : ""
+                )
         }
         .foregroundStyle(isSourceHovering ? DT.fg : DT.muted)
         .contentShape(Rectangle())

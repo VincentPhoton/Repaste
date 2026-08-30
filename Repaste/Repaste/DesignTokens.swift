@@ -6,6 +6,7 @@
 //  所有 UI 强制使用本文件定义的颜色、圆角、尺寸、字体与通用组件
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - 设计令牌
@@ -227,5 +228,126 @@ extension View {
     /// 应用面板背景修饰（panelRadius 圆角 + panel 底色 + 1px strokeStrong 描边）
     func panelBackground() -> some View {
         modifier(PanelBackgroundModifier())
+    }
+}
+
+// MARK: - 即时悬停提示（全局工具提示）
+
+/// 全局即时工具提示控制器：在光标旁弹出无边框小面板（哑光黑风格）。
+/// 替代系统 .help 的长延迟（用户感知不到提示作用）；从任意元素
+/// （设置项 ? 图标 / 面板「未知来源」）触发，不受视图裁剪与坐标系影响。
+@MainActor
+final class TooltipController {
+    static let shared = TooltipController()
+
+    private var panel: NSPanel?
+
+    private init() {}
+
+    /// 在光标旁显示提示；text 为空则隐藏。悬停期间持续显示，移开元素（onHover 结束）才隐藏。
+    func show(_ text: String) {
+        guard !text.isEmpty else { hide(); return }
+        let panel = makePanel()
+        self.panel = panel
+
+        let content = Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(DT.fg)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true) // 按给定宽度换行、取自然高度（不截断）
+            .frame(width: 260, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DT.menuSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(DT.stroke, lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.45), radius: 10, y: 5)
+            )
+        let hosting = NSHostingView(rootView: content)
+        // 用实测 fittingSize 布局面板，保证多行文本完整展示
+        let size = hosting.fittingSize
+        hosting.frame = NSRect(origin: .zero, size: size)
+        panel.setContentSize(size)
+        panel.contentView = hosting
+
+        // 定位到光标右下方（AppKit：y 向上，光标下方 = 更小的 y）；贴边自动钳制/翻转
+        let mouse = NSEvent.mouseLocation
+        var x = mouse.x + 14
+        var y = mouse.y - size.height - 8
+        if let screen = NSScreen.main {
+            x = min(max(x, screen.frame.minX + 8), screen.frame.maxX - size.width - 8)
+            if y < screen.frame.minY + 8 {
+                y = mouse.y + 14 // 光标下方放不下 → 放到光标上方
+            }
+            y = min(max(y, screen.frame.minY + 8), screen.frame.maxY - size.height - 8)
+        }
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+    }
+
+    /// 隐藏提示
+    func hide() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 100),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        // 层级必须高于设置窗口（statusBar+1）与主面板（statusBar），否则提示被压在窗口后面不可见
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        return panel
+    }
+}
+
+/// 悬停触发全局工具提示（延迟约 0.12s，跟随光标；text 为空不触发）
+struct InstantHelpTip: ViewModifier {
+    let text: String
+
+    @State private var task: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                task?.cancel()
+                if hovering, !text.isEmpty {
+                    // 极短延迟再显示（避免快速扫过即闪），远快于系统 .help
+                    task = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 120_000_000)
+                        guard !Task.isCancelled else { return }
+                        TooltipController.shared.show(text)
+                    }
+                } else {
+                    TooltipController.shared.hide()
+                }
+            }
+    }
+}
+
+extension View {
+    /// 即时悬停提示（替代 .help：延迟短、跟随光标、可感知）
+    func instantHelpTip(_ text: String) -> some View {
+        modifier(InstantHelpTip(text: text))
     }
 }

@@ -392,14 +392,25 @@ final class PanelViewModel {
         !clips.contains { $0.groupId == nil }
     }
 
-    /// 面板高度相关状态指纹（列表规模 / 来源条与提示条显隐 / 模板组数量 / 模板 tab 底部操作区显隐变化时改变；
-    /// 供 PanelController 观察并重算面板高度）
+    /// 面板列表显示记录条数（设置项；1-5，超出部分在列表内滚动；钳制到合法区间）
+    var maxVisibleRows: Int {
+        min(max(settings.maxVisibleRows, 1), 5)
+    }
+
+    /// 面板高度相关状态指纹（列表规模 / 来源条与提示条显隐 / 模板组数量 / 菜单浮层开合 /
+    /// 显示条数设置 / 模板 tab 底部操作区显隐变化时改变；供 PanelController 观察并重算面板高度）
     var contentSizeRevision: Int {
         filteredClips.count &* 31
             &+ (showsSourceBar ? 1 : 0)
             &+ (showsPausedBanner ? 2 : 0)
             &+ (isGroupTab ? 4 : 0)
             &+ groups.count
+            // 菜单浮层打开时改变面板高度预留（触发 PanelController 重新测量，让菜单在锚点下方放得下）
+            &+ (moreMenuClip != nil ? 8 : 0)
+            &+ (templateMenuClip != nil ? 16 : 0)
+            &+ (browserChooserClip != nil ? 32 : 0)
+            // 显示记录条数设置变化时重新测量面板高度
+            &+ maxVisibleRows
     }
 
     /// 组内模板排序比较（sortIndex 升序；无值条目排后面并按 createdAt 新→旧回退）

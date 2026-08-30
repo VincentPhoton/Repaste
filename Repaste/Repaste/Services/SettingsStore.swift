@@ -22,6 +22,8 @@ enum SettingsKey {
     static let suppressFullscreen = "suppress_fullscreen"
     /// 历史上限条数（超出淘汰最旧未固定非模板条目）
     static let maxItems = "max_items"
+    /// 面板列表显示记录条数（1-5；超出部分在列表内滚动）
+    static let maxVisibleRows = "max_visible_rows"
     /// 图片保留天数（原图 TTL，超期删原图、保留缩略图）
     static let imageTtlDays = "image_ttl_days"
     /// 忽略录制的来源 App bundleId 列表
@@ -124,6 +126,14 @@ final class SettingsStore {
         didSet {
             guard oldValue != maxItems else { return }
             defaults.set(maxItems, forKey: SettingsKey.maxItems)
+        }
+    }
+
+    /// 面板列表显示记录条数（默认 5；1-5，超出部分在列表内滚动）
+    var maxVisibleRows: Int = 5 {
+        didSet {
+            guard oldValue != maxVisibleRows else { return }
+            defaults.set(maxVisibleRows, forKey: SettingsKey.maxVisibleRows)
         }
     }
 
@@ -259,6 +269,7 @@ final class SettingsStore {
             SettingsKey.hoverSensitivity: "default",
             SettingsKey.suppressFullscreen: true,
             SettingsKey.maxItems: 200,
+            SettingsKey.maxVisibleRows: 5,
             SettingsKey.imageTtlDays: 7,
             SettingsKey.ignoredBundleIds: [String](),
             SettingsKey.defaultBrowser: "system",
@@ -295,6 +306,7 @@ final class SettingsStore {
         hoverSensitivity = defaults.string(forKey: SettingsKey.hoverSensitivity) ?? "default"
         suppressFullscreen = defaults.bool(forKey: SettingsKey.suppressFullscreen)
         maxItems = defaults.integer(forKey: SettingsKey.maxItems)
+        maxVisibleRows = min(max(defaults.integer(forKey: SettingsKey.maxVisibleRows), 1), 5)
         imageTtlDays = defaults.integer(forKey: SettingsKey.imageTtlDays)
         ignoredBundleIds = defaults.stringArray(forKey: SettingsKey.ignoredBundleIds) ?? []
         defaultBrowser = defaults.string(forKey: SettingsKey.defaultBrowser) ?? "system"

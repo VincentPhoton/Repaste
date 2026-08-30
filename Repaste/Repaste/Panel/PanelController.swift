@@ -144,6 +144,8 @@ final class PanelController {
         viewModel.reload()
         // 观察内容规模变化，动态调整面板高度
         observeContentForSizing()
+        // 菜单浮层打开时面板窗口临时长高（透明扩展区给菜单腾位）→ 临时关窗口阴影
+        observeMenuStateForShadow()
         // Space 切换 / 显示器唤醒后重同步面板
         observeWorkspaceForResync()
         // 点击穿透自愈看门狗（检测「可见但点击穿透」失联态并当场重建）
@@ -294,11 +296,33 @@ final class PanelController {
         })
     }
 
+    /// 菜单浮层打开时面板窗口会临时长高（透明扩展区给菜单腾位），此时关闭窗口阴影，
+    /// 避免阴影围绕扩展后的窗口矩形在下方应用上形成可见暗框；菜单自身带 SwiftUI 阴影不受影响。
+    /// 菜单关闭后恢复窗口阴影（保留面板深度层次感）。
+    private func observeMenuStateForShadow() {
+        withObservationTracking {
+            _ = viewModel.moreMenuClip
+            _ = viewModel.templateMenuClip
+            _ = viewModel.browserChooserClip
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let anyOpen = self.viewModel.moreMenuClip != nil
+                    || self.viewModel.templateMenuClip != nil
+                    || self.viewModel.browserChooserClip != nil
+                self.panel.hasShadow = !anyOpen
+                // withObservationTracking 观察一次即失效，重新注册
+                self.observeMenuStateForShadow()
+            }
+        }
+    }
+
     // MARK: 尺寸与位置
 
-    /// 面板高度上限：内容自适应，最大约 450，且不超屏幕可用高度 - 120
+    /// 面板高度上限：内容自适应，最大约 500（容纳「显示记录条数=5」时每条记录完整显示），
+    /// 且不超屏幕可用高度 - 120
     private func maxHeight(for screen: NSScreen) -> CGFloat {
-        max(220, min(450, screen.visibleFrame.height - 120))
+        max(220, min(500, screen.visibleFrame.height - 120))
     }
 
     /// 计算面板目标 frame（宽度固定 500，高度内容自适应；notch 顶部居中贴合屏幕顶 / centered 屏幕居中）

@@ -40,6 +40,9 @@ final class ClipboardMonitor: NSObject {
     private var lastPollDate = Date()
     /// 最近一次前台 App 切换时刻（来源归因：变化窗口后期发生切换则归因不可靠）
     private var frontmostSwitchDate: Date?
+    /// 最近约 5 秒（10 次轮询）的前台 App bundleId（来源归因「净切换」判断：
+    /// 截图工具等后台 App 瞬态激活又退回时，前台 App 仍在近期历史中，可直接归因）
+    private var lastFrontmostBundleIds: [String?] = []
     /// 应用自己写回剪贴板时记录的 changeCount（防自吞）
     private var externalWriteChangeCount: Int?
 
@@ -140,6 +143,8 @@ final class ClipboardMonitor: NSObject {
         let now = Date()
         let since = lastPollDate
         lastPollDate = now
+        // 每次轮询记录前台 App（供来源归因的「净切换」判断；无论是否有变化都记录）
+        defer { recordFrontmost() }
 
         let count = pasteboard.changeCount
         // 空闲：changeCount 与上次相同，直接返回（开销≈0）
@@ -158,6 +163,15 @@ final class ClipboardMonitor: NSObject {
         }
 
         handleChange(pasteboard: pasteboard, since: since)
+    }
+
+    /// 记录当前前台 App bundleId（保留最近 10 次轮询 ≈ 5 秒；来源归因「净切换」判断用）
+    private func recordFrontmost() {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        lastFrontmostBundleIds.append(front)
+        if lastFrontmostBundleIds.count > 10 {
+            lastFrontmostBundleIds.removeFirst()
+        }
     }
 
     // MARK: 变化处理链
@@ -192,12 +206,18 @@ final class ClipboardMonitor: NSObject {
     }
 
     /// 捕获来源 App：变化必然发生在 (since, now]。
-    /// 无法获得前台 App、或前台在「变化窗口起点 + 300ms 容差」之后才切换
-    /// （复制后立刻切走，归因不可靠）→ 记未知（nil）；
-    /// 窗口早期切换（切换后立刻复制）仍归因当前前台。
+    /// 归因规则：
+    /// - 前台 App 在最近约 5 秒的轮询历史中出现过（无净切换；截图工具等后台 App 瞬态激活又退回原 App）→ 直接归因前台；
+    /// - 前台是「新出现的 App」（近期未在历史中，如复制后立刻切走）且切换时刻在容差后 → 记未知（nil）；
+    /// - 其余情况归因当前前台。
     private func captureSource(since: Date) -> SourceApp? {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != nil || app.localizedName != nil else { return nil }
+        // 前台在近期历史中出现过：未发生净切换（瞬态激活已退回），归因可靠
+        if let front = app.bundleIdentifier, lastFrontmostBundleIds.contains(front) {
+            return SourceApp(bundleId: app.bundleIdentifier, name: app.localizedName)
+        }
+        // 前台是新出现的 App（近期未在历史中）：按切换时刻容差判定是否可靠
         if let switchDate = frontmostSwitchDate,
            switchDate > since.addingTimeInterval(Self.sourceGraceWindow) {
             return nil

@@ -300,6 +300,21 @@ struct GeneralSettingsCards: View {
                             selection: $settings.defaultTab
                         )
                     }
+                    SettingsRow(title: "显示记录条数", subtitle: "面板内固定显示 N 条，更多内容在列表内上下滚动") {
+                        SettingsPicker(
+                            options: [
+                                PickerOption("1", "1 条"),
+                                PickerOption("2", "2 条"),
+                                PickerOption("3", "3 条"),
+                                PickerOption("4", "4 条"),
+                                PickerOption("5", "5 条"),
+                            ],
+                            selection: Binding(
+                                get: { String(settings.maxVisibleRows) },
+                                set: { settings.maxVisibleRows = Int($0) ?? 5 }
+                            )
+                        )
+                    }
                     SettingsRow(title: "来源应用筛选", subtitle: "面板顶部显示来源筛选条") {
                         MatteToggle(isOn: settings.enableAppFilter) {
                             settings.enableAppFilter.toggle()

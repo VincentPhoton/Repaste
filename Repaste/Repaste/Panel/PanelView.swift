@@ -26,6 +26,8 @@ struct PanelView: View {
 
     /// 面板当前高度（onGeometryChange 持续更新；菜单上下翻转与预览图片高度约束用）
     @State private var panelHeight: CGFloat = 450
+    /// 列表首行实测高度（「显示记录条数」固定列表高度用：保证每条记录完整显示不截断）
+    @State private var firstRowHeight: CGFloat = 56
 
     /// 来源条横向滚动位置（右侧箭头点击滚动用）
     @State private var sourceScrollPos = ScrollPosition(edge: .leading)
@@ -38,7 +40,7 @@ struct PanelView: View {
 
     /// 列表区最大高度（固定区约 90~125 + 列表 360 ≈ 面板最大 450，受 PanelController 上限约束）
     private static let listMaxHeight: CGFloat = 360
-    /// 列表区最小高度（内容少时保底，避免面板过扁）
+    /// 列表区最小高度（内容少时保底，避免面板过扁；用于空态 / 模板区）
     private static let listMinHeight: CGFloat = 180
 
     // MARK: 浮层动效（菜单 / 弹窗 / 预览；Reduce Motion 退化为纯淡入淡出）
@@ -89,8 +91,11 @@ struct PanelView: View {
             listArea
         }
         .frame(width: DT.panelWidth)
-        .coordinateSpace(name: Self.coordinateSpaceName)
+        // 面板底形状先应用（仅覆盖内容区高度）；菜单浮层预留高度加在之后且顶部对齐——
+        // 黑色面板本体不随预留长高，预留区为透明，菜单在锚点下方展开时落到透明区（盖在桌面上）
         .panelShapeBackground(isNotch: viewModel.isNotchMode)
+        .frame(minHeight: menuReserveHeight, alignment: .top)
+        .coordinateSpace(name: Self.coordinateSpaceName)
         // ⋮ 更多菜单浮层（zIndex 低于图片预览与 toast；点菜单外任意处关闭）。
         // .id(overlayTeardownToken)：浮层归空 0.7s 后代次递增强制拆除浮层子树——
         // 移除 transition 偶发卡住时视图残留（不可见但吞点击），身份重建保证彻底移除
@@ -471,17 +476,27 @@ struct PanelView: View {
     // MARK: 列表区
 
     /// 列表区：模板组 tab 渲染模板区，其余渲染历史列表 / 空态（高度自适应，超出内部滚动）
+    @ViewBuilder
     private var listArea: some View {
-        Group {
-            if viewModel.isGroupTab {
-                templateArea
-            } else if viewModel.filteredClips.isEmpty {
-                emptyState
-            } else {
-                clipList
-            }
+        if viewModel.isGroupTab {
+            templateArea
+                .frame(minHeight: Self.listMinHeight, maxHeight: Self.listMaxHeight)
+        } else if viewModel.filteredClips.isEmpty {
+            emptyState
+                .frame(minHeight: Self.listMinHeight, maxHeight: Self.listMaxHeight)
+        } else {
+            // 历史列表：固定「显示记录条数」N 行高度，条目更多时列表内部上下滚动（类似网页固定高度列表）
+            clipList
+                .frame(height: visibleListHeight)
         }
-        .frame(minHeight: Self.listMinHeight, maxHeight: Self.listMaxHeight)
+    }
+
+    /// 历史列表区高度：按「显示记录条数」设置固定 N 行（1-5）；条目少于 N 行时按实际条数收缩。
+    /// 用实测首行高度 + 行间距(6) + 滚动区上下内边距(8+10) 计算，保证每条记录完整显示不截断
+    private var visibleListHeight: CGFloat {
+        let rows = min(viewModel.filteredClips.count, viewModel.maxVisibleRows)
+        let spacing = CGFloat(max(rows - 1, 0)) * 6
+        return CGFloat(rows) * firstRowHeight + spacing + 18
     }
 
     // MARK: 模板组内容区
@@ -596,10 +611,11 @@ struct PanelView: View {
         .padding(.bottom, 10)
     }
 
-    /// 行列表（卡片间 6 间距、水平 padding 14；键盘选中滚动跟随）
+    /// 行列表（卡片间 6 间距、水平 padding 14；键盘选中滚动跟随；
+    /// 显示滚动条：固定高度内可滚动时用户可感知「还有更多记录」）
     private var clipList: some View {
         ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 6) {
                     ForEach(Array(viewModel.filteredClips.enumerated()), id: \.element.id) { index, clip in
                         ClipRow(
@@ -625,6 +641,12 @@ struct PanelView: View {
                             }
                         )
                         .id(clip.id)
+                        // 实测首行高度（供列表固定高度计算；行高由内容决定，实测最准）
+                        .onGeometryChange(for: CGFloat.self) { proxy in
+                            proxy.size.height
+                        } action: { height in
+                            if index == 0 { firstRowHeight = height }
+                        }
                         // 新条目实时滑入（复制新内容 → 面板可见时从顶部滑入；删除时淡出）
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
@@ -753,7 +775,10 @@ struct PanelView: View {
         }
     }
 
-    /// 菜单弹出位置（通用）：右缘对齐锚点、锚点下方 6px；超出面板高度则向上翻转；整体钳制在面板内
+    /// 菜单弹出位置（通用）：右缘对齐锚点、锚点下方 6px；菜单底会超出面板
+    /// （面板已达最大高度、下方放不下）才翻转到按钮上方；翻转后也绝不越过
+    /// 顶部 UI 区（刘海安全区 + 搜索栏 + 标签行），避免被刘海遮挡。
+    /// 面板高度在菜单打开时已由 menuReserveHeight 预留，顶行/中行菜单都能朝下完整展开。
     private func menuPosition(anchor: CGRect, menuWidth: CGFloat, menuHeight: CGFloat) -> CGPoint {
         // 水平：右缘对齐按钮（钳制在面板内）
         var x = anchor.maxX - menuWidth
@@ -764,8 +789,30 @@ struct PanelView: View {
         if y + menuHeight > panelHeight - 10 {
             y = anchor.minY - 6 - menuHeight
         }
-        y = max(y, 10)
+        // 翻上后也绝不进入顶部 UI 区（刘海 / 搜索栏 / 标签行遮挡）
+        y = max(y, Self.menuTopBound)
         return CGPoint(x: x, y: y)
+    }
+
+    /// 顶部 UI 区高度（刘海安全区 + 搜索栏 + 标签行）：菜单向上翻转时不得高于此线，
+    /// 避免被刘海 / 搜索区遮挡
+    private static let menuTopBound: CGFloat = 160
+
+    /// 菜单浮层打开时面板窗口需要预留的高度（锚点下方 6pt + 菜单高度 + 边距）：
+    /// 黑色面板本体高度不变（见根视图修饰符顺序），预留区为透明，菜单在锚点下方
+    /// 展开时落入透明区（盖在桌面上）——不产生黑色空白、也不会被刘海遮挡
+    private var menuReserveHeight: CGFloat {
+        if let clip = viewModel.moreMenuClip {
+            return viewModel.moreMenuAnchor.maxY + 6 + ClipMoreMenu.estimatedHeight(for: clip) + 24
+        }
+        if let clip = viewModel.templateMenuClip {
+            return viewModel.templateMenuAnchor.maxY + 6 + TemplateRowMenu.estimatedHeight(for: clip) + 24
+        }
+        if viewModel.browserChooserClip != nil {
+            return viewModel.browserChooserAnchor.maxY + 6
+                + BrowserChooserMenu.estimatedHeight(options: BrowserChooserMenu.options()) + 24
+        }
+        return 0
     }
 
     /// 分发菜单动作到状态机

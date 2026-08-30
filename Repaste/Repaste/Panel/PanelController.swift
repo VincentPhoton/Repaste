@@ -125,7 +125,9 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // 阴影在顶边贴屏幕顶（frame.maxY）时会在顶部形成一条细亮边（截屏实证），
+        // 且对哑光纯黑设计贡献有限；关闭以避免顶边白色细线。
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
 
         let hostingView = NSHostingView(rootView: PanelView(viewModel: viewModel))

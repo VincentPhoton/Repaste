@@ -53,7 +53,7 @@ Anti-false-trigger state machine parameters (sensitivity adjustable in Settings)
 
 ### Option 1: Download the DMG (regular users)
 
-1. Download [`Repaste-V0.1.dmg`](Repaste-V0.1.dmg) (~2 MB, served directly from this repository)
+1. Download [`Repaste-V0.2.dmg`](https://github.com/klosexf/Repaste/releases/download/v0.2/Repaste-V0.2.dmg) (~2 MB, from GitHub Releases)
 2. Double-click to mount the DMG, then drag **Repaste** into the Applications folder
 3. Open Repaste from Applications
 

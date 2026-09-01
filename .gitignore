@@ -30,6 +30,16 @@ psnr-check.js
 psnr-detail.js
 verify-animation.js
 verify-promo.js
+verify-promo2.js
+psnr-check2.js
+
+# shotcast 视频工程与逐帧产物（仅本地保留）
+frames/
+frames2/
+shots2/
+psnr-tmp/
+psnr-tmp2/
+promo-shotcraft/
 
 # Trae IDE 配置
 .trae/
